@@ -45,3 +45,5 @@ python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml 
 - `jsonl`: 실제 연구용 position 데이터 경로
 
 JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하며, 데이터셋 빌더는 `game_id` 기준으로 `train/val/test` split을 수행합니다.
+
+기본 학습 엔트리포인트는 본 학습 체크포인트를 overfit 루프로 추가 오염시키지 않습니다. overfit은 테스트나 별도 실험에서만 직접 호출하도록 분리했습니다.

@@ -107,7 +107,6 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     epoch_metrics = []
     for _ in range(epochs):
         epoch_metrics.append(trainer.train_epoch(dataloader))
-    overfit_metrics = trainer.overfit(dataloader, int(config["train"].get("overfit_steps", 16)))
     output_dir = Path(config.get("output_dir", "outputs/train"))
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "model.pt"
@@ -122,9 +121,11 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "seed": seed,
         "git_hash": resolve_git_hash(),
         "epoch_metrics": epoch_metrics,
-        "overfit_metrics": overfit_metrics,
     }
     save(checkpoint, checkpoint_path)
+    overfit_metrics = None
+    if config["train"].get("run_overfit", False) and int(config["train"].get("overfit_steps", 0)) > 0:
+        overfit_metrics = trainer.overfit(dataloader, int(config["train"]["overfit_steps"]))
     metrics = {
         "epoch_metrics": epoch_metrics,
         "overfit_metrics": overfit_metrics,

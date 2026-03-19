@@ -5,9 +5,10 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from typing import Any
 
 
-def write_report(metrics: dict[str, float], output_dir: str | Path, name: str = "eval_report") -> dict[str, str]:
+def write_report(metrics: dict[str, Any], output_dir: str | Path, name: str = "eval_report") -> dict[str, str]:
     """JSON 및 CSV 형식의 평가 리포트를 기록한다."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -18,7 +19,8 @@ def write_report(metrics: dict[str, float], output_dir: str | Path, name: str = 
         writer = csv.writer(handle)
         writer.writerow(["metric", "value"])
         for key, value in metrics.items():
-            writer.writerow([key, value])
+            if isinstance(value, (int, float, str)):
+                writer.writerow([key, value])
     return {"json": str(json_path), "csv": str(csv_path)}
 
 

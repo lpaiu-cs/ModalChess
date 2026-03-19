@@ -14,12 +14,14 @@ train:
   learning_rate: 0.0005
   weight_decay: 0.01
   grad_clip_norm: 1.0
-  overfit_steps: 32
+  run_overfit: false
+  overfit_steps: 0
 losses:
   policy: 1.0
   policy_axis_ce: 1.0
   policy_listwise: 1.0
   state_probe: 1.0
   legality: 0.25
+  legality_pos_weight_cap: 64.0
   value: 0.1
   concept: 0.1

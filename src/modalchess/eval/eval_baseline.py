@@ -10,8 +10,8 @@ from torch.utils.data import DataLoader
 
 from modalchess.data.collators import collate_position_samples
 from modalchess.data.dataset_builder import DatasetBuildConfig, build_dataset
-from modalchess.eval.metrics_move_quality import collect_move_prediction_rows, compute_move_quality_metrics
-from modalchess.eval.metrics_state_fidelity import compute_state_fidelity_metrics
+from modalchess.eval.metrics_move_quality import collect_move_prediction_rows, summarize_move_prediction_rows
+from modalchess.eval.metrics_state_fidelity import StateFidelityAccumulator
 from modalchess.eval.report import write_failure_dump, write_report
 from modalchess.train.train_spatial_baseline import build_model_from_config, resolve_model_config
 from modalchess.train.trainer import move_batch_to_device
@@ -28,37 +28,44 @@ def run_evaluation(
     if checkpoint_path is None:
         raise ValueError("평가는 학습된 checkpoint를 명시적으로 받아야 한다.")
     dataset_config = DatasetBuildConfig(**config.get("dataset", {}))
+    if dataset_config.source != "fixture" and dataset_config.split not in {"val", "test"}:
+        raise ValueError("JSONL 평가에서는 split을 val 또는 test로 명시해야 한다.")
     dataset = build_dataset(dataset_config)
     model_config = resolve_model_config(config)
     concept_vocab = model_config.get("concept_vocab", [])
+    batch_size = int(config.get("metrics", {}).get("batch_size", min(len(dataset), 64)))
     dataloader = DataLoader(
         dataset,
-        batch_size=len(dataset),
+        batch_size=batch_size,
         shuffle=False,
-        collate_fn=lambda samples: collate_position_samples(samples, concept_vocab=concept_vocab),
+        collate_fn=lambda samples: collate_position_samples(
+            samples,
+            concept_vocab=concept_vocab,
+            fen_max_length=model_config.get("max_fen_length"),
+        ),
     )
     device = resolve_device()
     model = build_model_from_config(model_config).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    batch = next(iter(dataloader))
-    device_batch = move_batch_to_device(batch, device)
-    with autocast_context(device):
-        outputs = model(
-            board_planes=device_batch.get("board_planes"),
-            meta_features=device_batch.get("meta_features"),
-            fen_token_ids=device_batch.get("fen_token_ids"),
-            fen_attention_mask=device_batch.get("fen_attention_mask"),
-        )
+    topk = config.get("metrics", {}).get("topk", [1, 3, 5])
+    state_accumulator = StateFidelityAccumulator()
+    prediction_rows: list[dict[str, object]] = []
+    for batch in dataloader:
+        device_batch = move_batch_to_device(batch, device)
+        with autocast_context(device):
+            outputs = model(
+                board_planes=device_batch.get("board_planes"),
+                meta_features=device_batch.get("meta_features"),
+                fen_token_ids=device_batch.get("fen_token_ids"),
+                fen_attention_mask=device_batch.get("fen_attention_mask"),
+            )
+        state_accumulator.update(outputs, device_batch)
+        prediction_rows.extend(collect_move_prediction_rows(outputs, batch, topk=topk))
     metrics = {}
-    metrics.update(compute_state_fidelity_metrics(outputs, device_batch))
-    metrics.update(compute_move_quality_metrics(outputs, batch, topk=config.get("metrics", {}).get("topk", [1, 3, 5])))
-    prediction_rows = collect_move_prediction_rows(
-        outputs,
-        batch,
-        topk=config.get("metrics", {}).get("topk", [1, 3, 5]),
-    )
+    metrics.update(state_accumulator.compute())
+    metrics.update(summarize_move_prediction_rows(prediction_rows, topk=topk))
     failure_rows = [row for row in prediction_rows if not row["is_correct_top_1"]]
     output_dir = config.get("output_dir", "outputs/eval")
     report_paths = write_report(metrics, output_dir=output_dir)

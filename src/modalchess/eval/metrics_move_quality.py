@@ -39,6 +39,7 @@ def collect_move_prediction_rows(
             factorized_target.dst_square,
             factorized_target.promotion,
         )
+        target_index = legal_moves.index(target_tuple)
         top_predictions = []
         for rank_index, move_tuple in enumerate(ranked_moves[:max_topk]):
             top_predictions.append(
@@ -64,6 +65,12 @@ def collect_move_prediction_rows(
                 "predicted_top_1": top_predictions[0],
                 "top_predictions": top_predictions,
                 "is_correct_top_1": ranked_moves[0] == target_tuple,
+                "target_move_nll": float(
+                    F.cross_entropy(
+                        scores.unsqueeze(0),
+                        torch.tensor([target_index], dtype=torch.long, device=scores.device),
+                    ).detach().cpu()
+                ),
                 "is_promotion": bool(batch["target_is_promotion"][index].item()),
                 "is_castling": bool(batch["target_is_castling"][index].item()),
                 "is_en_passant": bool(batch["target_is_en_passant"][index].item()),
@@ -73,12 +80,11 @@ def collect_move_prediction_rows(
     return rows
 
 
-def compute_move_quality_metrics(
-    outputs: dict[str, torch.Tensor],
-    batch: dict[str, object],
+def summarize_move_prediction_rows(
+    rows: list[dict[str, object]],
     topk: Sequence[int] = (1, 3, 5),
 ) -> dict[str, float]:
-    """평가 시점 합법 수 필터링을 사용해 top-k 이동 정확도를 계산한다."""
+    """샘플별 예측 행으로부터 최종 move-quality 지표를 계산한다."""
     correct = {k: 0 for k in topk}
     subset_correct = {
         "promotion": 0,
@@ -87,61 +93,40 @@ def compute_move_quality_metrics(
         "check_evasion": 0,
     }
     subset_total = {name: 0 for name in subset_correct}
-    total = 0
-    nll_values: list[torch.Tensor] = []
-    rows = collect_move_prediction_rows(outputs, batch, topk=topk)
+    nll_total = 0.0
     for row in rows:
-        index = row["batch_index"]
-        legal_moves = batch["legal_moves_factorized"][index]
-        target_tuple = (
-            row["target_move"]["src_square"],
-            row["target_move"]["dst_square"],
-            row["target_move"]["promotion"],
-        )
-        sample_outputs = {
-            "src_logits": outputs["src_logits"][index],
-            "dst_logits": outputs["dst_logits"][index],
-            "promo_logits": outputs["promo_logits"][index],
-        }
-        if "pair_logits" in outputs:
-            sample_outputs["pair_logits"] = outputs["pair_logits"][index]
-        scores = score_factorized_moves(sample_outputs, legal_moves)
-        target_index = legal_moves.index(target_tuple)
-        nll_values.append(
-            F.cross_entropy(
-                scores.unsqueeze(0),
-                torch.tensor([target_index], dtype=torch.long, device=scores.device),
-            )
-        )
-        total += 1
+        target = row["target_move"]
+        nll_total += float(row["target_move_nll"])
         for k in topk:
             if any(
-                prediction["src_square"] == target_tuple[0]
-                and prediction["dst_square"] == target_tuple[1]
-                and prediction["promotion"] == target_tuple[2]
+                prediction["src_square"] == target["src_square"]
+                and prediction["dst_square"] == target["dst_square"]
+                and prediction["promotion"] == target["promotion"]
                 for prediction in row["top_predictions"][:k]
             ):
                 correct[k] += 1
-        if row["is_promotion"]:
-            subset_total["promotion"] += 1
-            subset_correct["promotion"] += int(row["is_correct_top_1"])
-        if row["is_castling"]:
-            subset_total["castling"] += 1
-            subset_correct["castling"] += int(row["is_correct_top_1"])
-        if row["is_en_passant"]:
-            subset_total["en_passant"] += 1
-            subset_correct["en_passant"] += int(row["is_correct_top_1"])
-        if row["is_check_evasion"]:
-            subset_total["check_evasion"] += 1
-            subset_correct["check_evasion"] += int(row["is_correct_top_1"])
+        for subset_name in subset_total:
+            flag_name = f"is_{subset_name}"
+            if row[flag_name]:
+                subset_total[subset_name] += 1
+                subset_correct[subset_name] += int(row["is_correct_top_1"])
+    total = len(rows)
     metrics = {}
     for k in topk:
         metrics[f"top_{k}_move_accuracy"] = float(correct[k] / total) if total else 0.0
-    metrics["target_move_nll"] = (
-        float(torch.stack(nll_values).mean().detach().cpu()) if nll_values else 0.0
-    )
+    metrics["target_move_nll"] = nll_total / total if total else 0.0
     for subset_name, subset_count in subset_total.items():
         metrics[f"{subset_name}_top_1_move_accuracy"] = (
             float(subset_correct[subset_name] / subset_count) if subset_count else 0.0
         )
     return metrics
+
+
+def compute_move_quality_metrics(
+    outputs: dict[str, torch.Tensor],
+    batch: dict[str, object],
+    topk: Sequence[int] = (1, 3, 5),
+) -> dict[str, float]:
+    """평가 시점 합법 수 필터링을 사용해 top-k 이동 정확도를 계산한다."""
+    rows = collect_move_prediction_rows(outputs, batch, topk=topk)
+    return summarize_move_prediction_rows(rows, topk=topk)

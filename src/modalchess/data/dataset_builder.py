@@ -24,10 +24,11 @@ class DatasetBuildConfig:
     history_length: int = 1
     limit: int | None = None
     dataset_path: str | None = None
-    split: str = "train"
+    split: str = "all"
     split_seed: int = 7
     train_ratio: float = 0.8
     val_ratio: float = 0.1
+    require_repetition_count: bool = False
 
 
 class FixtureDataset(Dataset[PositionSample]):
@@ -41,6 +42,31 @@ class FixtureDataset(Dataset[PositionSample]):
 
     def __getitem__(self, index: int) -> PositionSample:
         return self.samples[index]
+
+
+def validate_position_sample(
+    sample: PositionSample,
+    require_repetition_count: bool = False,
+    repetition_count_present: bool = True,
+) -> None:
+    """샘플이 학습 전 만족해야 하는 일관성 규칙을 검증한다."""
+    board = board_state_to_board(sample.board_state)
+    if sample.target_move_uci is not None:
+        legal_moves = {move.uci() for move in board.legal_moves}
+        if sample.target_move_uci not in legal_moves:
+            raise ValueError(
+                f"target_move_uci가 합법 수가 아니다: {sample.position_id} / {sample.target_move_uci}"
+            )
+        if sample.next_fen is not None:
+            next_board = board.copy(stack=False)
+            next_board.push_uci(sample.target_move_uci)
+            expected_next_fen = next_board.fen(en_passant="fen")
+            if sample.next_fen != expected_next_fen:
+                raise ValueError(
+                    f"next_fen이 target_move_uci 결과와 일치하지 않는다: {sample.position_id}"
+                )
+    if require_repetition_count and not repetition_count_present:
+        raise ValueError(f"repetition_count가 필요한 실험인데 누락됐다: {sample.position_id}")
 
 
 def build_fixture_samples(config: DatasetBuildConfig) -> list[PositionSample]:
@@ -66,6 +92,11 @@ def build_fixture_samples(config: DatasetBuildConfig) -> list[PositionSample]:
             next_fen=next_fen,
             concept_tags=spec.concept_tags,
             engine_eval_cp=spec.engine_eval_cp,
+        )
+        validate_position_sample(
+            sample,
+            require_repetition_count=config.require_repetition_count,
+            repetition_count_present=False,
         )
         samples.append(sample)
     if config.limit is not None:
@@ -130,8 +161,14 @@ def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
                 concept_tags=record.get("concept_tags", []),
                 engine_eval_cp=record.get("engine_eval_cp"),
             )
-            if "repetition_count" in record:
+            repetition_count_present = "repetition_count" in record
+            if repetition_count_present:
                 sample.board_state.meta.repetition_count = int(record["repetition_count"])
+            validate_position_sample(
+                sample,
+                require_repetition_count=config.require_repetition_count,
+                repetition_count_present=repetition_count_present,
+            )
             samples.append(sample)
     samples = _split_by_game_id(samples, config)
     if config.limit is not None:

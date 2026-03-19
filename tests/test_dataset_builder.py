@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from modalchess.data.dataset_builder import DatasetBuildConfig, build_dataset
 
 
@@ -56,3 +58,28 @@ def test_jsonl_dataset_build_and_game_split(tmp_path: Path) -> None:
     assert train_game_ids
     assert test_game_ids
     assert train_game_ids.isdisjoint(test_game_ids)
+
+
+def test_jsonl_dataset_validates_illegal_target_upfront(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "invalid_positions.jsonl"
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "position_id": "bad_1",
+                    "game_id": "g1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "target_move_uci": "e7e5",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(ValueError, match="target_move_uci"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="all",
+            )
+        )

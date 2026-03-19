@@ -45,6 +45,20 @@ def _listwise_policy_loss(
     return torch.stack(losses).mean()
 
 
+def _weighted_legality_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    max_pos_weight: float,
+) -> torch.Tensor:
+    positives = targets.sum()
+    negatives = targets.numel() - positives
+    if positives.item() == 0:
+        pos_weight = torch.tensor(1.0, device=targets.device, dtype=targets.dtype)
+    else:
+        pos_weight = torch.clamp(negatives / positives, min=1.0, max=max_pos_weight)
+    return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
+
+
 def compute_modalchess_losses(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, Any],
@@ -86,9 +100,10 @@ def compute_modalchess_losses(
         square_state_loss + side_to_move_loss + castling_loss + en_passant_loss + in_check_loss
     ) / 5.0
 
-    legality_loss = F.binary_cross_entropy_with_logits(
+    legality_loss = _weighted_legality_loss(
         outputs["legality_logits"],
         batch["legality_tensor"],
+        max_pos_weight=float(weights.get("legality_pos_weight_cap", 64.0)),
     )
     value_loss = F.mse_loss(outputs["value_logits"], batch["value_targets"])
     concept_loss = F.binary_cross_entropy_with_logits(
