@@ -12,6 +12,8 @@ from torch.utils.data import DataLoader
 
 from modalchess.data.collators import collate_position_samples
 from modalchess.data.dataset_builder import DatasetBuildConfig, build_dataset
+from modalchess.data.fen_tokenizer import FenTokenizer
+from modalchess.models.fen_baseline import FenPolicyBaselineModel
 from modalchess.models.modalchess_core import ModalChessCoreModel
 from modalchess.train.optim import build_optimizer
 from modalchess.train.trainer import Trainer
@@ -39,6 +41,20 @@ def resolve_git_hash() -> str:
 
 def build_model_from_config(model_config: dict[str, Any]) -> ModalChessCoreModel:
     """설정 딕셔너리로부터 코어 모델을 생성한다."""
+    architecture = model_config.get("architecture", "spatial")
+    if architecture == "fen":
+        tokenizer = FenTokenizer.default()
+        return FenPolicyBaselineModel(
+            vocab_size=len(tokenizer.vocab),
+            max_length=model_config.get("max_fen_length", 128),
+            d_model=model_config["d_model"],
+            num_layers=model_config["num_layers"],
+            num_heads=model_config["num_heads"],
+            dropout=model_config.get("dropout", 0.1),
+            legality_hidden_dim=model_config.get("legality_hidden_dim", 64),
+            concept_vocab=model_config.get("concept_vocab", []),
+            use_pair_scorer=model_config.get("use_pair_scorer", False),
+        )
     return ModalChessCoreModel(
         history_length=model_config["history_length"],
         input_channels=model_config["input_channels"],
@@ -68,7 +84,11 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         dataset,
         batch_size=config["train"]["batch_size"],
         shuffle=True,
-        collate_fn=lambda samples: collate_position_samples(samples, concept_vocab=concept_vocab),
+        collate_fn=lambda samples: collate_position_samples(
+            samples,
+            concept_vocab=concept_vocab,
+            fen_max_length=model_config.get("max_fen_length"),
+        ),
     )
     model = build_model_from_config(model_config)
     optimizer = build_optimizer(

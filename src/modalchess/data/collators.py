@@ -8,6 +8,7 @@ import chess
 import torch
 
 from modalchess.data.board_state import board_state_to_board
+from modalchess.data.fen_tokenizer import FenTokenizer
 from modalchess.data.move_codec import move_to_factorized, uci_to_factorized
 from modalchess.data.schema import PositionSample
 from modalchess.data.tensor_codec import build_legality_tensor, build_state_probe_targets
@@ -25,9 +26,15 @@ def _concept_targets(concept_tags: list[str], concept_vocab: list[str]) -> torch
 def collate_position_samples(
     samples: list[PositionSample],
     concept_vocab: list[str],
+    fen_max_length: int | None = None,
 ) -> dict[str, Any]:
     """fixture 샘플을 학습/평가 배치로 묶는다."""
     board_planes = torch.stack([sample.board_planes for sample in samples], dim=0)
+    tokenizer = FenTokenizer.default()
+    fen_token_ids, fen_attention_mask = tokenizer.batch_encode(
+        [sample.fen for sample in samples],
+        max_length=fen_max_length,
+    )
     square_state: list[torch.Tensor] = []
     side_to_move: list[torch.Tensor] = []
     castling: list[torch.Tensor] = []
@@ -111,6 +118,8 @@ def collate_position_samples(
         "fens": [sample.fen for sample in samples],
         "board_planes": board_planes,
         "meta_features": torch.stack(meta_features, dim=0),
+        "fen_token_ids": fen_token_ids,
+        "fen_attention_mask": fen_attention_mask,
         "legal_moves_uci": [sample.legal_moves_uci for sample in samples],
         "legal_moves_factorized": legal_moves_factorized,
         "target_move_uci": [sample.target_move_uci for sample in samples],

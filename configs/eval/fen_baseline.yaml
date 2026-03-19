@@ -1,0 +1,11 @@
+output_dir: outputs/eval_fen
+model_config_paths:
+  - configs/model/fen_encoder.yaml
+  - configs/model/heads.yaml
+dataset:
+  source: fixture
+  history_length: 1
+  limit: null
+model: {}
+metrics:
+  topk: [1, 3, 5]

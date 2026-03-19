@@ -14,9 +14,19 @@
 ## 2주차
 
 - 로컬 fixture 데이터로 spatial baseline 학습
+- 동일 출력 공간을 갖는 FEN baseline 추가
 - state-fidelity 및 move-quality 지표 평가
 - relation bias와 loss weight에 대한 소형 ablation 실행
 - 향후 작업을 위한 future fusion/rationale 인터페이스 안정화
+
+## 비교 실험 축
+
+- `B1`: FEN/text baseline
+- `B2`: spatial baseline
+- `B3`: spatial + meta token
+- `B4`: spatial + meta token + relation bias
+
+리포트에는 aggregate metric뿐 아니라 sample-level failure dump도 함께 남깁니다.
 
 ## 성공 기준
 

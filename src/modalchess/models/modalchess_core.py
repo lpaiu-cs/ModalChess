@@ -55,8 +55,16 @@ class ModalChessCoreModel(nn.Module):
         self.value_head = ValueHead(d_model=d_model)
         self.concept_head = ConceptHead(d_model=d_model, concept_vocab=concept_vocab)
 
-    def forward(self, board_planes, meta_features=None):
+    def forward(
+        self,
+        board_planes=None,
+        meta_features=None,
+        fen_token_ids=None,
+        fen_attention_mask=None,
+    ):
         """`[B, H, C, 8, 8]` 입력에 대해 공간 베이스라인을 실행한다."""
+        if board_planes is None:
+            raise ValueError("spatial baseline에는 board_planes가 필요하다.")
         extra_tokens = None
         if meta_features is not None:
             extra_tokens = self.meta_encoder(meta_features)

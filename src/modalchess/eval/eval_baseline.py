@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 
 from modalchess.data.collators import collate_position_samples
 from modalchess.data.dataset_builder import DatasetBuildConfig, build_dataset
-from modalchess.eval.metrics_move_quality import compute_move_quality_metrics
+from modalchess.eval.metrics_move_quality import collect_move_prediction_rows, compute_move_quality_metrics
 from modalchess.eval.metrics_state_fidelity import compute_state_fidelity_metrics
-from modalchess.eval.report import write_report
+from modalchess.eval.report import write_failure_dump, write_report
 from modalchess.train.train_spatial_baseline import build_model_from_config, resolve_model_config
 from modalchess.train.trainer import move_batch_to_device
 from modalchess.utils.config import load_yaml_config
@@ -45,14 +45,28 @@ def run_evaluation(
     batch = next(iter(dataloader))
     device_batch = move_batch_to_device(batch, device)
     with autocast_context(device):
-        outputs = model(device_batch["board_planes"], meta_features=device_batch["meta_features"])
+        outputs = model(
+            board_planes=device_batch.get("board_planes"),
+            meta_features=device_batch.get("meta_features"),
+            fen_token_ids=device_batch.get("fen_token_ids"),
+            fen_attention_mask=device_batch.get("fen_attention_mask"),
+        )
     metrics = {}
     metrics.update(compute_state_fidelity_metrics(outputs, device_batch))
     metrics.update(compute_move_quality_metrics(outputs, batch, topk=config.get("metrics", {}).get("topk", [1, 3, 5])))
+    prediction_rows = collect_move_prediction_rows(
+        outputs,
+        batch,
+        topk=config.get("metrics", {}).get("topk", [1, 3, 5]),
+    )
+    failure_rows = [row for row in prediction_rows if not row["is_correct_top_1"]]
     output_dir = config.get("output_dir", "outputs/eval")
     report_paths = write_report(metrics, output_dir=output_dir)
+    failure_dump_path = write_failure_dump(failure_rows, output_dir=output_dir)
     metrics["report_json"] = report_paths["json"]
     metrics["report_csv"] = report_paths["csv"]
+    metrics["failure_dump_jsonl"] = failure_dump_path
+    metrics["num_failures"] = float(len(failure_rows))
     return metrics
 
 

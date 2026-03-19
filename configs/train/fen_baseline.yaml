@@ -1,0 +1,25 @@
+seed: 7
+output_dir: outputs/train_fen
+model_config_paths:
+  - configs/model/fen_encoder.yaml
+  - configs/model/heads.yaml
+dataset:
+  source: fixture
+  history_length: 1
+  limit: null
+model: {}
+train:
+  batch_size: 4
+  epochs: 8
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  overfit_steps: 32
+losses:
+  policy: 1.0
+  policy_axis_ce: 1.0
+  policy_listwise: 1.0
+  state_probe: 1.0
+  legality: 0.25
+  value: 0.1
+  concept: 0.1

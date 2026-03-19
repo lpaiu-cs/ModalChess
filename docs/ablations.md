@@ -4,6 +4,7 @@
 
 ## 권장 ablation
 
+- spatial baseline 대 FEN baseline
 - relation bias 사용 여부
 - history length `H=1` 대 `H=2`
 - legality loss weight 사용 여부
@@ -15,12 +16,14 @@
 이동 품질과 상태 충실도를 함께 추적합니다.
 
 - top-1 및 top-k 합법 수 정확도
+- target move NLL
 - 말 점유 복원 정확도
 - 차례 예측 정확도
 - 캐슬링 권리 정확도
 - 앙파상 정확도
 - 체크 상태 정확도
 - legality 행렬 정확도
+- sample-level failure dump
 
 ## 비목표
 

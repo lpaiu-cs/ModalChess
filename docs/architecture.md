@@ -6,8 +6,10 @@
 
 - 구조화된 `BoardState`와 `BoardMeta`
 - 가역적인 FEN 및 이동 코덱
+- fixture와 JSONL 연구 데이터셋을 분리하는 데이터 경로
 - `[H, C, 8, 8]` 형태의 보드 텐서 코덱
 - square-aware 인코더와 factorized move policy
+- 비교축으로 사용할 FEN/text baseline
 - state fidelity, legality, value, concept를 위한 보조 헤드
 - CUDA-aware 지도학습 및 평가 스캐폴딩
 
@@ -79,6 +81,16 @@
 - `LegalityHead`: 조밀한 `[64, 64]` legality 행렬을 예측
 - `ValueHead`: 스칼라 value를 추정
 - `ConceptHead`: 설정 가능한 멀티라벨 concept를 예측
+
+## 비교 기준선
+
+실험 비교축을 위해 FEN 문자열만 읽는 선형 baseline도 함께 제공합니다.
+
+- 문자 단위 FEN 토크나이저
+- Transformer 기반 시퀀스 인코더
+- FEN 시퀀스에서 64개 square query를 뽑아 동일한 action/state 출력 공간으로 투영
+
+이 baseline은 spatial 모델과 동일한 policy/state/value/concept 평가 경로를 공유합니다.
 
 ## 범위 경계
 

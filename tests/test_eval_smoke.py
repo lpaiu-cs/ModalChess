@@ -69,3 +69,4 @@ def test_eval_smoke_run(tmp_path: Path) -> None:
     assert "target_move_nll" in metrics
     assert Path(metrics["report_json"]).exists()
     assert Path(metrics["report_csv"]).exists()
+    assert Path(metrics["failure_dump_jsonl"]).exists()

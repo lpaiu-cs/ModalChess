@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import random
+from pathlib import Path
 
 from torch.utils.data import Dataset
 
-from modalchess.data.board_state import board_to_board_state
+from modalchess.data.board_state import board_state_to_board, board_to_board_state
+from modalchess.data.fen_codec import fen_to_board_state
 from modalchess.data.fixtures import DEFAULT_CONCEPT_VOCAB, fixture_boards
 from modalchess.data.schema import PositionSample
 from modalchess.data.tensor_codec import encode_fen_history
@@ -20,6 +24,10 @@ class DatasetBuildConfig:
     history_length: int = 1
     limit: int | None = None
     dataset_path: str | None = None
+    split: str = "train"
+    split_seed: int = 7
+    train_ratio: float = 0.8
+    val_ratio: float = 0.1
 
 
 class FixtureDataset(Dataset[PositionSample]):
@@ -48,6 +56,7 @@ def build_fixture_samples(config: DatasetBuildConfig) -> list[PositionSample]:
         board_state = board_to_board_state(board)
         sample = PositionSample(
             position_id=spec.position_id,
+            game_id=spec.position_id,
             fen=board.fen(en_passant="fen"),
             history_fens=history,
             board_planes=encode_fen_history(history, history_length=config.history_length),
@@ -69,13 +78,79 @@ def build_fixture_dataset(config: DatasetBuildConfig) -> FixtureDataset:
     return FixtureDataset(build_fixture_samples(config))
 
 
+def _split_by_game_id(
+    samples: list[PositionSample],
+    config: DatasetBuildConfig,
+) -> list[PositionSample]:
+    game_ids = sorted({sample.game_id or sample.position_id for sample in samples})
+    rng = random.Random(config.split_seed)
+    rng.shuffle(game_ids)
+    train_cut = int(len(game_ids) * config.train_ratio)
+    val_cut = train_cut + int(len(game_ids) * config.val_ratio)
+    split_to_ids = {
+        "train": set(game_ids[:train_cut]),
+        "val": set(game_ids[train_cut:val_cut]),
+        "test": set(game_ids[val_cut:]),
+        "all": set(game_ids),
+    }
+    selected_ids = split_to_ids.get(config.split)
+    if selected_ids is None:
+        raise ValueError(f"지원하지 않는 split: {config.split}")
+    filtered = [
+        sample for sample in samples if (sample.game_id or sample.position_id) in selected_ids
+    ]
+    return filtered
+
+
+def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
+    """JSONL 기반 실제 연구 데이터 샘플을 생성한다."""
+    if config.dataset_path is None:
+        raise ValueError("JSONL 데이터셋에는 dataset_path가 필요하다.")
+    dataset_path = Path(config.dataset_path)
+    samples: list[PositionSample] = []
+    with dataset_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            fen = record["fen"]
+            history_fens = record.get("history_fens") or [fen]
+            board_state = fen_to_board_state(fen)
+            sample = PositionSample(
+                position_id=record["position_id"],
+                game_id=record.get("game_id"),
+                fen=fen,
+                history_fens=history_fens,
+                board_planes=encode_fen_history(history_fens, history_length=config.history_length),
+                legal_moves_uci=record.get("legal_moves_uci")
+                or [move.uci() for move in board_state_to_board(board_state).legal_moves],
+                board_state=board_state,
+                target_move_uci=record.get("target_move_uci"),
+                next_fen=record.get("next_fen"),
+                concept_tags=record.get("concept_tags", []),
+                engine_eval_cp=record.get("engine_eval_cp"),
+            )
+            if "repetition_count" in record:
+                sample.board_state.meta.repetition_count = int(record["repetition_count"])
+            samples.append(sample)
+    samples = _split_by_game_id(samples, config)
+    if config.limit is not None:
+        return samples[: config.limit]
+    return samples
+
+
+def build_jsonl_dataset(config: DatasetBuildConfig) -> FixtureDataset:
+    """JSONL 샘플을 torch Dataset으로 감싼다."""
+    return FixtureDataset(build_jsonl_samples(config))
+
+
 def build_dataset(config: DatasetBuildConfig) -> FixtureDataset:
     """데이터 소스에 따라 학습/평가용 데이터셋을 생성한다."""
     if config.source == "fixture":
         return build_fixture_dataset(config)
-    raise NotImplementedError(
-        "실제 연구 데이터 경로는 아직 구현하지 않았다. fixture와 분리된 인터페이스만 마련했다."
-    )
+    if config.source == "jsonl":
+        return build_jsonl_dataset(config)
+    raise ValueError(f"지원하지 않는 데이터 소스: {config.source}")
 
 
 def default_concept_vocab() -> list[str]:

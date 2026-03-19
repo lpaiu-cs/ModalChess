@@ -44,6 +44,7 @@ class PositionSample:
     """fixture, 학습, 평가에 공통으로 쓰는 단일 포지션 샘플."""
 
     position_id: str
+    game_id: str | None
     fen: str
     history_fens: list[str]
     board_planes: torch.Tensor

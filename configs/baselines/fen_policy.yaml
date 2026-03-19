@@ -1,0 +1,4 @@
+name: fen_policy_baseline
+model_config_paths:
+  - configs/model/fen_encoder.yaml
+  - configs/model/heads.yaml
