@@ -22,6 +22,7 @@ def board_to_board_state(board: chess.Board) -> BoardState:
         en_passant_square=board.ep_square,
         halfmove_clock=board.halfmove_clock,
         fullmove_number=board.fullmove_number,
+        repetition_count=0,
     )
     return BoardState(pieces=pieces, meta=meta)
 

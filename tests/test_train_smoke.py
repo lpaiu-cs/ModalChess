@@ -46,6 +46,8 @@ def test_tiny_overfit_smoke_run() -> None:
         optimizer=optimizer,
         loss_weights={
             "policy": 1.0,
+            "policy_axis_ce": 1.0,
+            "policy_listwise": 1.0,
             "state_probe": 1.0,
             "legality": 0.25,
             "value": 0.1,
@@ -53,5 +55,5 @@ def test_tiny_overfit_smoke_run() -> None:
         },
         grad_clip_norm=1.0,
     )
-    metrics = trainer.overfit(dataloader, num_steps=12)
+    metrics = trainer.overfit(dataloader, num_steps=20)
     assert metrics["final_loss"] < metrics["initial_loss"]

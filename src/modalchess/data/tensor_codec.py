@@ -9,6 +9,7 @@ import torch
 
 from modalchess.data.board_state import board_state_to_board
 from modalchess.data.fen_codec import fen_to_board_state
+from modalchess.data.move_codec import move_to_factorized
 from modalchess.data.schema import BoardState
 from modalchess.utils.square_utils import BOARD_SIZE, square_to_coords
 
@@ -28,6 +29,10 @@ PIECE_CHANNELS: Final[tuple[str, ...]] = (
 )
 NUM_BASE_CHANNELS: Final[int] = 18
 EN_PASSANT_NONE_INDEX: Final[int] = 64
+SQUARE_STATE_VOCAB: Final[tuple[str, ...]] = ("empty",) + PIECE_CHANNELS
+PIECE_TO_SQUARE_STATE_INDEX: Final[dict[str, int]] = {
+    symbol: index for index, symbol in enumerate(SQUARE_STATE_VOCAB) if index > 0
+}
 
 
 def empty_board_planes(num_channels: int = NUM_BASE_CHANNELS) -> torch.Tensor:
@@ -89,7 +94,10 @@ def current_snapshot(board_planes: torch.Tensor) -> torch.Tensor:
 def build_state_probe_targets(state: BoardState) -> dict[str, torch.Tensor]:
     """`BoardState`로부터 현재 상태 복원용 타깃을 만든다."""
     board = board_state_to_board(state)
-    current_planes = encode_board_state(state)
+    square_state = torch.zeros(BOARD_SIZE, BOARD_SIZE, dtype=torch.long)
+    for square, symbol in state.pieces.items():
+        row, col = square_to_coords(square)
+        square_state[row, col] = PIECE_TO_SQUARE_STATE_INDEX[symbol]
     castling = torch.tensor(
         [
             float(state.meta.white_can_castle_kingside),
@@ -103,7 +111,7 @@ def build_state_probe_targets(state: BoardState) -> dict[str, torch.Tensor]:
     if en_passant_index is None:
         en_passant_index = EN_PASSANT_NONE_INDEX
     return {
-        "piece_planes": current_planes[:12].clone(),
+        "square_state": square_state,
         "side_to_move": torch.tensor(float(state.meta.side_to_move == "w"), dtype=torch.float32),
         "castling_rights": castling,
         "en_passant_index": torch.tensor(en_passant_index, dtype=torch.long),
@@ -111,9 +119,10 @@ def build_state_probe_targets(state: BoardState) -> dict[str, torch.Tensor]:
     }
 
 
-def build_legality_matrix(board: chess.Board) -> torch.Tensor:
-    """조밀한 `[64, 64]` legality 타깃 행렬을 만든다."""
-    target = torch.zeros(64, 64, dtype=torch.float32)
+def build_legality_tensor(board: chess.Board) -> torch.Tensor:
+    """promotion-aware `[64, 64, 5]` legality 타깃 텐서를 만든다."""
+    target = torch.zeros(64, 64, 5, dtype=torch.float32)
     for move in board.legal_moves:
-        target[move.from_square, move.to_square] = 1.0
+        factorized = move_to_factorized(move)
+        target[factorized.src_square, factorized.dst_square, factorized.promotion] = 1.0
     return target

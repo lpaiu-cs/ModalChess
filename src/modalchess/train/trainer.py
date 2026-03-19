@@ -49,7 +49,7 @@ class Trainer:
         self.optimizer.zero_grad(set_to_none=True)
         batch = move_batch_to_device(batch, self.device)
         with autocast_context(self.device):
-            outputs = self.model(batch["board_planes"])
+            outputs = self.model(batch["board_planes"], meta_features=batch["meta_features"])
             losses = compute_modalchess_losses(outputs, batch, self.loss_weights)
         if self.grad_scaler.is_enabled():
             self.grad_scaler.scale(losses["total_loss"]).backward()

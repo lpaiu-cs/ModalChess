@@ -1,4 +1,5 @@
 legality_hidden_dim: 64
+use_pair_scorer: false
 concept_vocab:
   - check
   - capture

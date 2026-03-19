@@ -6,3 +6,5 @@ num_heads: 4
 mlp_ratio: 4
 dropout: 0.1
 use_relation_bias: true
+meta_num_tokens: 2
+meta_hidden_dim: 128

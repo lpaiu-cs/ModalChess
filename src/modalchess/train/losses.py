@@ -7,11 +7,42 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from modalchess.models.heads.policy_factorized import score_factorized_moves
+
 
 def _cross_entropy_or_zero(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     if (targets != -100).sum() == 0:
         return logits.sum() * 0.0
     return F.cross_entropy(logits, targets, ignore_index=-100)
+
+
+def _listwise_policy_loss(
+    outputs: dict[str, torch.Tensor],
+    batch: dict[str, Any],
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    target_indices = batch["target_legal_move_index"]
+    for sample_index, legal_moves in enumerate(batch["legal_moves_factorized"]):
+        target_index = int(target_indices[sample_index].item())
+        if target_index < 0 or not legal_moves:
+            continue
+        sample_outputs = {
+            "src_logits": outputs["src_logits"][sample_index],
+            "dst_logits": outputs["dst_logits"][sample_index],
+            "promo_logits": outputs["promo_logits"][sample_index],
+        }
+        if "pair_logits" in outputs:
+            sample_outputs["pair_logits"] = outputs["pair_logits"][sample_index]
+        scores = score_factorized_moves(sample_outputs, legal_moves)
+        losses.append(
+            F.cross_entropy(
+                scores.unsqueeze(0),
+                torch.tensor([target_index], dtype=torch.long, device=scores.device),
+            )
+        )
+    if not losses:
+        return outputs["src_logits"].sum() * 0.0
+    return torch.stack(losses).mean()
 
 
 def compute_modalchess_losses(
@@ -23,11 +54,17 @@ def compute_modalchess_losses(
     src_loss = _cross_entropy_or_zero(outputs["src_logits"], batch["src_targets"])
     dst_loss = _cross_entropy_or_zero(outputs["dst_logits"], batch["dst_targets"])
     promo_loss = _cross_entropy_or_zero(outputs["promo_logits"], batch["promo_targets"])
-    policy_loss = (src_loss + dst_loss + promo_loss) / 3.0
+    axis_policy_loss = (src_loss + dst_loss + promo_loss) / 3.0
+    listwise_policy_loss = _listwise_policy_loss(outputs, batch)
+    axis_weight = weights.get("policy_axis_ce", 1.0)
+    listwise_weight = weights.get("policy_listwise", 1.0)
+    policy_loss = (
+        axis_weight * axis_policy_loss + listwise_weight * listwise_policy_loss
+    ) / max(axis_weight + listwise_weight, 1e-8)
 
-    piece_loss = F.binary_cross_entropy_with_logits(
-        outputs["piece_logits"],
-        batch["state_piece_planes"],
+    square_state_loss = F.cross_entropy(
+        outputs["square_state_logits"],
+        batch["state_square_classes"],
     )
     side_to_move_loss = F.binary_cross_entropy_with_logits(
         outputs["side_to_move_logits"],
@@ -46,12 +83,12 @@ def compute_modalchess_losses(
         batch["state_in_check"],
     )
     state_probe_loss = (
-        piece_loss + side_to_move_loss + castling_loss + en_passant_loss + in_check_loss
+        square_state_loss + side_to_move_loss + castling_loss + en_passant_loss + in_check_loss
     ) / 5.0
 
     legality_loss = F.binary_cross_entropy_with_logits(
         outputs["legality_logits"],
-        batch["legality_matrix"],
+        batch["legality_tensor"],
     )
     value_loss = F.mse_loss(outputs["value_logits"], batch["value_targets"])
     concept_loss = F.binary_cross_entropy_with_logits(
@@ -70,6 +107,8 @@ def compute_modalchess_losses(
     return {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
+        "policy_axis_loss": axis_policy_loss,
+        "policy_listwise_loss": listwise_policy_loss,
         "state_probe_loss": state_probe_loss,
         "legality_loss": legality_loss,
         "value_loss": value_loss,

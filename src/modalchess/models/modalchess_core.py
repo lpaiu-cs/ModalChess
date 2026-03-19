@@ -9,6 +9,7 @@ from modalchess.models.heads.concept import ConceptHead
 from modalchess.models.heads.legality import LegalityHead
 from modalchess.models.heads.policy_factorized import PolicyFactorizedHead
 from modalchess.models.heads.state_probe import StateProbeHead
+from modalchess.models.meta_encoder import MetaEncoder
 from modalchess.models.heads.value import ValueHead
 
 
@@ -28,9 +29,16 @@ class ModalChessCoreModel(nn.Module):
         legality_hidden_dim: int = 64,
         concept_vocab: list[str] | None = None,
         use_pair_scorer: bool = False,
+        meta_num_tokens: int = 2,
+        meta_hidden_dim: int | None = None,
     ) -> None:
         super().__init__()
         concept_vocab = concept_vocab or []
+        self.meta_encoder = MetaEncoder(
+            d_model=d_model,
+            num_tokens=meta_num_tokens,
+            hidden_dim=meta_hidden_dim,
+        )
         self.encoder = BoardEncoder(
             history_length=history_length,
             input_channels=input_channels,
@@ -47,9 +55,12 @@ class ModalChessCoreModel(nn.Module):
         self.value_head = ValueHead(d_model=d_model)
         self.concept_head = ConceptHead(d_model=d_model, concept_vocab=concept_vocab)
 
-    def forward(self, board_planes):
+    def forward(self, board_planes, meta_features=None):
         """`[B, H, C, 8, 8]` 입력에 대해 공간 베이스라인을 실행한다."""
-        encoded = self.encoder(board_planes)
+        extra_tokens = None
+        if meta_features is not None:
+            extra_tokens = self.meta_encoder(meta_features)
+        encoded = self.encoder(board_planes, extra_tokens=extra_tokens)
         tokens = encoded["tokens"]
         pooled = encoded["pooled"]
         outputs = {}

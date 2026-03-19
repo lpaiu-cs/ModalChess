@@ -15,6 +15,9 @@ def test_board_encoder_output_shapes() -> None:
         use_relation_bias=True,
     )
     board_planes = torch.randn(3, 2, 18, 8, 8)
-    outputs = model(board_planes)
+    extra_tokens = torch.randn(3, 2, 64)
+    outputs = model(board_planes, extra_tokens=extra_tokens)
     assert outputs["tokens"].shape == (3, 64, 64)
+    assert outputs["meta_tokens"].shape == (3, 2, 64)
+    assert outputs["context_tokens"].shape == (3, 66, 64)
     assert outputs["pooled"].shape == (3, 64)

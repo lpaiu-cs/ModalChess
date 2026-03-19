@@ -19,6 +19,7 @@ class BoardMeta:
     en_passant_square: int | None
     halfmove_clock: int
     fullmove_number: int
+    repetition_count: int = 0
 
 
 @dataclass(slots=True)
@@ -46,10 +47,14 @@ class PositionSample:
     fen: str
     history_fens: list[str]
     board_planes: torch.Tensor
-    meta: dict[str, int | float | str | None]
     legal_moves_uci: list[str]
+    board_state: BoardState
     target_move_uci: str | None = None
     next_fen: str | None = None
     concept_tags: list[str] = field(default_factory=list)
     engine_eval_cp: float | None = None
-    board_state: BoardState | None = None
+
+    @property
+    def meta(self) -> BoardMeta:
+        """`BoardState`에 포함된 단일 메타데이터 원천을 노출한다."""
+        return self.board_state.meta

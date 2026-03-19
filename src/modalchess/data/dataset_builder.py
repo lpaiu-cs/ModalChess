@@ -16,8 +16,10 @@ from modalchess.data.tensor_codec import encode_fen_history
 class DatasetBuildConfig:
     """로컬 fixture 데이터셋 생성을 위한 단순 설정."""
 
+    source: str = "fixture"
     history_length: int = 1
     limit: int | None = None
+    dataset_path: str | None = None
 
 
 class FixtureDataset(Dataset[PositionSample]):
@@ -43,22 +45,18 @@ def build_fixture_samples(config: DatasetBuildConfig) -> list[PositionSample]:
             next_board = board.copy(stack=False)
             next_board.push_uci(spec.target_move_uci)
             next_fen = next_board.fen(en_passant="fen")
+        board_state = board_to_board_state(board)
         sample = PositionSample(
             position_id=spec.position_id,
             fen=board.fen(en_passant="fen"),
             history_fens=history,
             board_planes=encode_fen_history(history, history_length=config.history_length),
-            meta={
-                "side_to_move": "w" if board.turn else "b",
-                "halfmove_clock": board.halfmove_clock,
-                "fullmove_number": board.fullmove_number,
-            },
             legal_moves_uci=legal_moves_uci,
+            board_state=board_state,
             target_move_uci=spec.target_move_uci,
             next_fen=next_fen,
             concept_tags=spec.concept_tags,
             engine_eval_cp=spec.engine_eval_cp,
-            board_state=board_to_board_state(board),
         )
         samples.append(sample)
     if config.limit is not None:
@@ -69,6 +67,15 @@ def build_fixture_samples(config: DatasetBuildConfig) -> list[PositionSample]:
 def build_fixture_dataset(config: DatasetBuildConfig) -> FixtureDataset:
     """로컬 fixture 샘플을 torch Dataset으로 감싼다."""
     return FixtureDataset(build_fixture_samples(config))
+
+
+def build_dataset(config: DatasetBuildConfig) -> FixtureDataset:
+    """데이터 소스에 따라 학습/평가용 데이터셋을 생성한다."""
+    if config.source == "fixture":
+        return build_fixture_dataset(config)
+    raise NotImplementedError(
+        "실제 연구 데이터 경로는 아직 구현하지 않았다. fixture와 분리된 인터페이스만 마련했다."
+    )
 
 
 def default_concept_vocab() -> list[str]:

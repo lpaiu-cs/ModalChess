@@ -149,14 +149,48 @@ class BoardEncoder(nn.Module):
         )
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, board_planes: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _expand_relation_bias(
+        self,
+        relation_bias: torch.Tensor | None,
+        num_extra_tokens: int,
+    ) -> torch.Tensor | None:
+        """meta token 수에 맞춰 relation bias를 0으로 패딩한다."""
+        if relation_bias is None or num_extra_tokens == 0:
+            return relation_bias
+        num_heads = relation_bias.size(0)
+        expanded = torch.zeros(
+            num_heads,
+            64 + num_extra_tokens,
+            64 + num_extra_tokens,
+            dtype=relation_bias.dtype,
+            device=relation_bias.device,
+        )
+        expanded[:, :64, :64] = relation_bias
+        return expanded
+
+    def forward(
+        self,
+        board_planes: torch.Tensor,
+        extra_tokens: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         """보드 plane을 square 토큰과 pooled 표현으로 인코딩한다."""
-        tokens = self.patch_embed(board_planes)
-        tokens = self.positional_encoding(tokens)
-        tokens = self.dropout(tokens)
+        board_tokens = self.patch_embed(board_planes)
+        board_tokens = self.positional_encoding(board_tokens)
+        board_tokens = self.dropout(board_tokens)
+        tokens = board_tokens
+        num_extra_tokens = 0
+        if extra_tokens is not None:
+            num_extra_tokens = extra_tokens.size(1)
+            tokens = torch.cat([board_tokens, extra_tokens], dim=1)
         relation_bias = self.relation_bias() if self.relation_bias is not None else None
+        relation_bias = self._expand_relation_bias(relation_bias, num_extra_tokens)
         for block in self.blocks:
             tokens = block(tokens, relation_bias=relation_bias)
         tokens = self.norm(tokens)
         pooled = tokens.mean(dim=1)
-        return {"tokens": tokens, "pooled": pooled}
+        return {
+            "tokens": tokens[:, :64],
+            "meta_tokens": tokens[:, 64:],
+            "context_tokens": tokens,
+            "pooled": pooled,
+        }
