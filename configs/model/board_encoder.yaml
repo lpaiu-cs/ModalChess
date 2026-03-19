@@ -1,0 +1,8 @@
+history_length: 1
+input_channels: 18
+d_model: 128
+num_layers: 2
+num_heads: 4
+mlp_ratio: 4
+dropout: 0.1
+use_relation_bias: true

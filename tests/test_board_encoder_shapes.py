@@ -1,0 +1,20 @@
+import torch
+
+from modalchess.models.board_encoder import BoardEncoder
+
+
+def test_board_encoder_output_shapes() -> None:
+    model = BoardEncoder(
+        history_length=2,
+        input_channels=18,
+        d_model=64,
+        num_layers=2,
+        num_heads=4,
+        mlp_ratio=2,
+        dropout=0.0,
+        use_relation_bias=True,
+    )
+    board_planes = torch.randn(3, 2, 18, 8, 8)
+    outputs = model(board_planes)
+    assert outputs["tokens"].shape == (3, 64, 64)
+    assert outputs["pooled"].shape == (3, 64)

@@ -1,0 +1,14 @@
+legality_hidden_dim: 64
+concept_vocab:
+  - check
+  - capture
+  - recapture
+  - pin
+  - fork
+  - skewer
+  - discovered_attack
+  - discovered_check
+  - king_safety
+  - passed_pawn
+  - open_file
+  - promotion_threat

@@ -1,0 +1,40 @@
+seed: 7
+output_dir: outputs/train
+dataset:
+  history_length: 1
+  limit: null
+model:
+  history_length: 1
+  input_channels: 18
+  d_model: 128
+  num_layers: 2
+  num_heads: 4
+  mlp_ratio: 4
+  dropout: 0.1
+  use_relation_bias: true
+  concept_vocab:
+    - check
+    - capture
+    - recapture
+    - pin
+    - fork
+    - skewer
+    - discovered_attack
+    - discovered_check
+    - king_safety
+    - passed_pawn
+    - open_file
+    - promotion_threat
+train:
+  batch_size: 4
+  epochs: 8
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  overfit_steps: 32
+losses:
+  policy: 1.0
+  state_probe: 1.0
+  legality: 0.25
+  value: 0.1
+  concept: 0.1

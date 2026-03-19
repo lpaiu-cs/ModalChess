@@ -1,0 +1,24 @@
+name: spatial_policy_baseline
+history_length: 1
+model:
+  history_length: 1
+  input_channels: 18
+  d_model: 128
+  num_layers: 2
+  num_heads: 4
+  mlp_ratio: 4
+  dropout: 0.1
+  use_relation_bias: true
+  concept_vocab:
+    - check
+    - capture
+    - recapture
+    - pin
+    - fork
+    - skewer
+    - discovered_attack
+    - discovered_check
+    - king_safety
+    - passed_pawn
+    - open_file
+    - promotion_threat
