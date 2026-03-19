@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 
@@ -52,7 +52,7 @@ class PositionSample:
     board_state: BoardState
     target_move_uci: str | None = None
     next_fen: str | None = None
-    concept_tags: list[str] = field(default_factory=list)
+    concept_tags: list[str] | None = None
     engine_eval_cp: float | None = None
 
     @property

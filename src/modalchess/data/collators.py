@@ -14,10 +14,10 @@ from modalchess.data.schema import PositionSample
 from modalchess.data.tensor_codec import build_legality_tensor, build_state_probe_targets
 
 
-def _concept_targets(concept_tags: list[str], concept_vocab: list[str]) -> torch.Tensor:
+def _concept_targets(concept_tags: list[str] | None, concept_vocab: list[str]) -> torch.Tensor:
     vocab_index = {concept: idx for idx, concept in enumerate(concept_vocab)}
     targets = torch.zeros(len(concept_vocab), dtype=torch.float32)
-    for concept in concept_tags:
+    for concept in concept_tags or []:
         if concept in vocab_index:
             targets[vocab_index[concept]] = 1.0
     return targets
@@ -47,7 +47,9 @@ def collate_position_samples(
     promo_targets: list[int] = []
     target_legal_move_index: list[int] = []
     value_targets: list[float] = []
+    has_engine_eval: list[bool] = []
     concept_targets: list[torch.Tensor] = []
+    has_concept_labels: list[bool] = []
     legal_moves_factorized: list[list[tuple[int, int, int]]] = []
     subset_promotion: list[bool] = []
     subset_castling: list[bool] = []
@@ -105,7 +107,9 @@ def collate_position_samples(
             target_is_castling.append(board.is_castling(target_move))
             target_is_en_passant.append(board.is_en_passant(target_move))
 
+        has_engine_eval.append(sample.engine_eval_cp is not None)
         value_targets.append(float((sample.engine_eval_cp or 0.0) / 1000.0))
+        has_concept_labels.append(sample.concept_tags is not None)
         concept_targets.append(_concept_targets(sample.concept_tags, concept_vocab))
         legal_moves_factorized.append(legal_move_tuples)
         subset_promotion.append(any(move.promotion != 0 for move in legal_moves))
@@ -134,7 +138,9 @@ def collate_position_samples(
         "state_in_check": torch.stack(in_check, dim=0),
         "legality_tensor": torch.stack(legality, dim=0),
         "value_targets": torch.tensor(value_targets, dtype=torch.float32),
+        "has_engine_eval": torch.tensor(has_engine_eval, dtype=torch.bool),
         "concept_targets": torch.stack(concept_targets, dim=0),
+        "has_concept_labels": torch.tensor(has_concept_labels, dtype=torch.bool),
         "subset_promotion": torch.tensor(subset_promotion, dtype=torch.bool),
         "subset_castling": torch.tensor(subset_castling, dtype=torch.bool),
         "subset_en_passant": torch.tensor(subset_en_passant, dtype=torch.bool),

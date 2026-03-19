@@ -44,6 +44,10 @@ python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml 
 - `fixture`: 저장소 내부 smoke/회귀 검증용 소형 데이터
 - `jsonl`: 실제 연구용 position 데이터 경로
 
-JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하며, 데이터셋 빌더는 `game_id` 기준으로 `train/val/test` split을 수행합니다.
+JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하며, 데이터셋 빌더는 `game_id` 기준으로 `train/val/test` split을 수행합니다. `split != all`인데 `game_id`가 없으면 기본적으로 에러를 내고, 정말 position-level split이 필요할 때만 `allow_position_level_split: true`를 명시적으로 켜야 합니다.
+
+`history_fens`를 제공하는 경우 마지막 항목은 반드시 현재 `fen`과 같아야 하며, 중간 전이도 합법적인 단일 수로 연결되는지 검증합니다. `legal_moves_uci`를 제공해도 학습에는 보드 기준으로 다시 계산한 합법 수를 사용하고, JSONL 값은 검증용으로만 다룹니다.
+
+`concept_tags`와 `engine_eval_cp`는 선택적 auxiliary 라벨입니다. 필드가 아예 없는 샘플은 `0-label`로 간주하지 않고, 해당 손실에서 마스킹되어 제외됩니다.
 
 기본 학습 엔트리포인트는 본 학습 체크포인트를 overfit 루프로 추가 오염시키지 않습니다. overfit은 테스트나 별도 실험에서만 직접 호출하도록 분리했습니다.

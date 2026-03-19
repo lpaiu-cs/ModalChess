@@ -70,12 +70,12 @@ class ModalChessCoreModel(nn.Module):
             extra_tokens = self.meta_encoder(meta_features)
         encoded = self.encoder(board_planes, extra_tokens=extra_tokens)
         tokens = encoded["tokens"]
-        pooled = encoded["pooled"]
+        context_pooled = encoded["context_pooled"]
         outputs = {}
         outputs.update(encoded)
-        outputs.update(self.policy_head(tokens=tokens, pooled=pooled))
-        outputs.update(self.state_probe_head(tokens=tokens, pooled=pooled))
+        outputs.update(self.policy_head(tokens=tokens, pooled=context_pooled))
+        outputs.update(self.state_probe_head(tokens=tokens, pooled=context_pooled))
         outputs.update(self.legality_head(tokens=tokens))
-        outputs.update(self.value_head(pooled=pooled))
-        outputs.update(self.concept_head(pooled=pooled))
+        outputs.update(self.value_head(pooled=context_pooled))
+        outputs.update(self.concept_head(pooled=context_pooled))
         return outputs

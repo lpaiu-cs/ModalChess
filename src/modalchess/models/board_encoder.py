@@ -187,10 +187,13 @@ class BoardEncoder(nn.Module):
         for block in self.blocks:
             tokens = block(tokens, relation_bias=relation_bias)
         tokens = self.norm(tokens)
-        pooled = tokens.mean(dim=1)
+        board_pooled = tokens[:, :64].mean(dim=1)
+        context_pooled = tokens.mean(dim=1)
         return {
             "tokens": tokens[:, :64],
             "meta_tokens": tokens[:, 64:],
             "context_tokens": tokens,
-            "pooled": pooled,
+            "board_pooled": board_pooled,
+            "context_pooled": context_pooled,
+            "pooled": context_pooled,
         }

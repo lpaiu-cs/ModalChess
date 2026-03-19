@@ -83,3 +83,95 @@ def test_jsonl_dataset_validates_illegal_target_upfront(tmp_path: Path) -> None:
                 split="all",
             )
         )
+
+
+def test_jsonl_dataset_validates_history_alignment_upfront(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "bad_history.jsonl"
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "position_id": "bad_history",
+                    "game_id": "g1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+                    "history_fens": [
+                        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    ],
+                    "target_move_uci": "e7e5",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(ValueError, match="history_fens"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="all",
+            )
+        )
+
+
+def test_jsonl_dataset_requires_game_id_for_group_split(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "missing_game_id.jsonl"
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "position_id": "p1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "target_move_uci": "e2e4",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(ValueError, match="game_id"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="train",
+                train_ratio=1.0,
+                val_ratio=0.0,
+            )
+        )
+
+    dataset = build_dataset(
+        DatasetBuildConfig(
+            source="jsonl",
+            dataset_path=str(dataset_path),
+            split="train",
+            train_ratio=1.0,
+            val_ratio=0.0,
+            allow_position_level_split=True,
+        )
+    )
+    assert len(dataset.samples) == 1
+
+
+def test_jsonl_dataset_validates_provided_legal_moves(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "bad_legal_moves.jsonl"
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "position_id": "bad_legal_moves",
+                    "game_id": "g1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "legal_moves_uci": ["e2e4"],
+                    "target_move_uci": "e2e4",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(ValueError, match="legal_moves_uci"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="all",
+            )
+        )

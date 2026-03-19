@@ -78,9 +78,16 @@
 
 - `PolicyFactorizedHead`: source logits `[B, 64]`, destination logits `[B, 64]`, promotion logits `[B, 5]`
 - `StateProbeHead`: 보드 plane과 명시적 상태 메타데이터를 복원
-- `LegalityHead`: 조밀한 `[64, 64]` legality 행렬을 예측
+- `LegalityHead`: promotion-aware 조밀한 `[64, 64, 5]` exact-action legality 텐서를 예측
 - `ValueHead`: 스칼라 value를 추정
 - `ConceptHead`: 설정 가능한 멀티라벨 concept를 예측
+
+공간 인코더는 최종적으로 두 종류의 pooled 표현을 분리해 반환합니다.
+
+- `board_pooled`: 64개 보드 square 토큰만 평균한 표현
+- `context_pooled`: 보드 토큰과 meta token을 함께 평균한 표현
+
+현재 baseline에서는 value/concept/policy promo/state meta 복원에 `context_pooled`를 명시적으로 사용합니다. 이 분리는 이후 pooling ablation과 meta token 수 변화에 대한 비교를 안정화하기 위한 것입니다.
 
 ## 비교 기준선
 

@@ -59,6 +59,34 @@ def _weighted_legality_loss(
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
+def _masked_mse_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    mask: torch.Tensor | None,
+) -> torch.Tensor:
+    if mask is None:
+        return F.mse_loss(logits, targets)
+    active = mask.to(logits.device).bool()
+    if active.sum() == 0:
+        return logits.sum() * 0.0
+    return F.mse_loss(logits[active], targets[active])
+
+
+def _masked_bce_with_logits(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    mask: torch.Tensor | None,
+) -> torch.Tensor:
+    if mask is None:
+        return F.binary_cross_entropy_with_logits(logits, targets)
+    active = mask.to(logits.device).bool()
+    if active.sum() == 0:
+        return logits.sum() * 0.0
+    losses = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    expanded_mask = active.unsqueeze(-1).expand_as(losses)
+    return (losses * expanded_mask).sum() / expanded_mask.sum().clamp_min(1)
+
+
 def compute_modalchess_losses(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, Any],
@@ -105,10 +133,15 @@ def compute_modalchess_losses(
         batch["legality_tensor"],
         max_pos_weight=float(weights.get("legality_pos_weight_cap", 64.0)),
     )
-    value_loss = F.mse_loss(outputs["value_logits"], batch["value_targets"])
-    concept_loss = F.binary_cross_entropy_with_logits(
+    value_loss = _masked_mse_loss(
+        outputs["value_logits"],
+        batch["value_targets"],
+        batch.get("has_engine_eval"),
+    )
+    concept_loss = _masked_bce_with_logits(
         outputs["concept_logits"],
         batch["concept_targets"],
+        batch.get("has_concept_labels"),
     )
 
     total_loss = (

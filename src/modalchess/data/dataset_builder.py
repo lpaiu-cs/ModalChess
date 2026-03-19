@@ -7,6 +7,7 @@ import json
 import random
 from pathlib import Path
 
+import chess
 from torch.utils.data import Dataset
 
 from modalchess.data.board_state import board_state_to_board, board_to_board_state
@@ -29,6 +30,31 @@ class DatasetBuildConfig:
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     require_repetition_count: bool = False
+    allow_position_level_split: bool = False
+
+
+def _assert_history_fens(position_id: str, fen: str, history_fens: list[str]) -> None:
+    """히스토리 FEN이 현재 상태와 정렬되어 있는지 검증한다."""
+    if not history_fens:
+        raise ValueError(f"history_fens가 비어 있다: {position_id}")
+    if history_fens[-1] != fen:
+        raise ValueError(f"history_fens[-1]이 현재 fen과 일치하지 않는다: {position_id}")
+    for transition_index, (previous_fen, current_fen) in enumerate(
+        zip(history_fens, history_fens[1:], strict=False)
+    ):
+        board = chess.Board(previous_fen)
+        reachable = False
+        for move in board.legal_moves:
+            next_board = board.copy(stack=False)
+            next_board.push(move)
+            if next_board.fen(en_passant="fen") == current_fen:
+                reachable = True
+                break
+        if not reachable:
+            raise ValueError(
+                "history_fens 전이가 합법적인 단일 수로 연결되지 않는다: "
+                f"{position_id} / step={transition_index}"
+            )
 
 
 class FixtureDataset(Dataset[PositionSample]):
@@ -50,6 +76,7 @@ def validate_position_sample(
     repetition_count_present: bool = True,
 ) -> None:
     """샘플이 학습 전 만족해야 하는 일관성 규칙을 검증한다."""
+    _assert_history_fens(sample.position_id, sample.fen, sample.history_fens)
     board = board_state_to_board(sample.board_state)
     if sample.target_move_uci is not None:
         legal_moves = {move.uci() for move in board.legal_moves}
@@ -113,7 +140,19 @@ def _split_by_game_id(
     samples: list[PositionSample],
     config: DatasetBuildConfig,
 ) -> list[PositionSample]:
-    game_ids = sorted({sample.game_id or sample.position_id for sample in samples})
+    if config.split != "all" and not config.allow_position_level_split:
+        missing_game_ids = [sample.position_id for sample in samples if sample.game_id is None]
+        if missing_game_ids:
+            raise ValueError(
+                "game-level split에는 모든 샘플의 game_id가 필요하다. "
+                "position 단위 분할이 필요하면 allow_position_level_split=true를 명시해야 한다."
+            )
+    game_ids = sorted(
+        {
+            sample.game_id if sample.game_id is not None else sample.position_id
+            for sample in samples
+        }
+    )
     rng = random.Random(config.split_seed)
     rng.shuffle(game_ids)
     train_cut = int(len(game_ids) * config.train_ratio)
@@ -128,7 +167,11 @@ def _split_by_game_id(
     if selected_ids is None:
         raise ValueError(f"지원하지 않는 split: {config.split}")
     filtered = [
-        sample for sample in samples if (sample.game_id or sample.position_id) in selected_ids
+        sample
+        for sample in samples
+        if (
+            sample.game_id if sample.game_id is not None else sample.position_id
+        ) in selected_ids
     ]
     return filtered
 
@@ -147,18 +190,29 @@ def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
             fen = record["fen"]
             history_fens = record.get("history_fens") or [fen]
             board_state = fen_to_board_state(fen)
+            board = board_state_to_board(board_state)
+            computed_legal_moves_uci = [move.uci() for move in board.legal_moves]
+            provided_legal_moves_uci = record.get("legal_moves_uci")
+            if provided_legal_moves_uci is not None:
+                if (
+                    len(provided_legal_moves_uci) != len(computed_legal_moves_uci)
+                    or set(provided_legal_moves_uci) != set(computed_legal_moves_uci)
+                ):
+                    raise ValueError(
+                        "legal_moves_uci가 python-chess 합법 수 집합과 일치하지 않는다: "
+                        f"{record['position_id']}"
+                    )
             sample = PositionSample(
                 position_id=record["position_id"],
                 game_id=record.get("game_id"),
                 fen=fen,
                 history_fens=history_fens,
                 board_planes=encode_fen_history(history_fens, history_length=config.history_length),
-                legal_moves_uci=record.get("legal_moves_uci")
-                or [move.uci() for move in board_state_to_board(board_state).legal_moves],
+                legal_moves_uci=computed_legal_moves_uci,
                 board_state=board_state,
                 target_move_uci=record.get("target_move_uci"),
                 next_fen=record.get("next_fen"),
-                concept_tags=record.get("concept_tags", []),
+                concept_tags=record["concept_tags"] if "concept_tags" in record else None,
                 engine_eval_cp=record.get("engine_eval_cp"),
             )
             repetition_count_present = "repetition_count" in record

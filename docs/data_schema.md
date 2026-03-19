@@ -54,8 +54,10 @@
 - 합법 수 목록
 - 선택적 지도학습 타깃 수
 - 선택적 다음 포지션
-- concept 태그
+- 선택적 concept 태그
 - 선택적 스칼라 value proxy
+
+`concept_tags`가 `[]`이면 "명시적으로 concept 없음"을 뜻하고, `null` 또는 필드 누락은 "라벨 없음"을 뜻합니다. `engine_eval_cp`도 마찬가지로 필드가 없으면 value loss에서 제외됩니다.
 
 ## State probe 타깃
 
@@ -82,4 +84,12 @@ state probe는 현재 상태에 대한 타깃만 복원합니다.
 - `concept_tags` (선택)
 - `engine_eval_cp` (선택)
 
-학습/평가 split은 position이 아니라 `game_id` 기준으로 수행합니다.
+`history_fens`가 있으면 다음 규칙을 만족해야 합니다.
+
+- 비어 있지 않아야 함
+- 마지막 항목 `history_fens[-1]`이 현재 `fen`과 같아야 함
+- 인접한 두 항목은 합법적인 단일 수 전이여야 함
+
+`legal_moves_uci`를 제공할 수는 있지만, 빌더는 이를 `python-chess` 기준 합법 수 집합과 대조 검증한 뒤 내부적으로는 재계산된 합법 수를 사용합니다.
+
+학습/평가 split은 position이 아니라 `game_id` 기준으로 수행합니다. `split != all`인데 `game_id`가 없는 레코드가 섞여 있으면 기본적으로 에러를 발생시키며, 위험한 position-level split은 `allow_position_level_split: true`일 때만 허용합니다.

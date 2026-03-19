@@ -20,4 +20,6 @@ def test_board_encoder_output_shapes() -> None:
     assert outputs["tokens"].shape == (3, 64, 64)
     assert outputs["meta_tokens"].shape == (3, 2, 64)
     assert outputs["context_tokens"].shape == (3, 66, 64)
+    assert outputs["board_pooled"].shape == (3, 64)
+    assert outputs["context_pooled"].shape == (3, 64)
     assert outputs["pooled"].shape == (3, 64)

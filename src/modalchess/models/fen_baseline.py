@@ -77,7 +77,7 @@ class FenPolicyBaselineModel(nn.Module):
         sequence = self.token_embed(fen_token_ids) + self.pos_embed(positions)
         key_padding_mask = ~fen_attention_mask
         sequence = self.encoder(sequence, src_key_padding_mask=key_padding_mask)
-        pooled = (
+        sequence_pooled = (
             sequence * fen_attention_mask.unsqueeze(-1)
         ).sum(dim=1) / fen_attention_mask.sum(dim=1, keepdim=True).clamp_min(1)
         square_queries = self.square_queries.unsqueeze(0).expand(batch_size, -1, -1)
@@ -89,16 +89,19 @@ class FenPolicyBaselineModel(nn.Module):
             need_weights=False,
         )
         square_tokens = self.output_norm(square_tokens + square_queries)
-        pooled = 0.5 * (pooled + square_tokens.mean(dim=1))
+        board_pooled = square_tokens.mean(dim=1)
+        context_pooled = 0.5 * (sequence_pooled + board_pooled)
         outputs = {
             "tokens": square_tokens,
             "meta_tokens": square_tokens.new_zeros(batch_size, 0, square_tokens.size(-1)),
             "context_tokens": square_tokens,
-            "pooled": pooled,
+            "board_pooled": board_pooled,
+            "context_pooled": context_pooled,
+            "pooled": context_pooled,
         }
-        outputs.update(self.policy_head(tokens=square_tokens, pooled=pooled))
-        outputs.update(self.state_probe_head(tokens=square_tokens, pooled=pooled))
+        outputs.update(self.policy_head(tokens=square_tokens, pooled=context_pooled))
+        outputs.update(self.state_probe_head(tokens=square_tokens, pooled=context_pooled))
         outputs.update(self.legality_head(tokens=square_tokens))
-        outputs.update(self.value_head(pooled=pooled))
-        outputs.update(self.concept_head(pooled=pooled))
+        outputs.update(self.value_head(pooled=context_pooled))
+        outputs.update(self.concept_head(pooled=context_pooled))
         return outputs
