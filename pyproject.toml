@@ -13,6 +13,7 @@ dependencies = [
   "python-chess>=1.999",
   "torch>=2.2",
   "transformers>=4.40",
+  "zstandard>=0.22",
 ]
 
 [project.optional-dependencies]

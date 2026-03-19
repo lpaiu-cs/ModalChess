@@ -1,0 +1,3 @@
+PuzzleId,GameId,FEN,Moves,Themes
+puzzle_001,game_001,rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1,e2e4 e7e5 g1f3,opening
+puzzle_002,game_002,4k3/8/8/8/8/8/4r3/4K3 w - - 0 1,e1e2 e8d7,check short

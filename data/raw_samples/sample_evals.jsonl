@@ -1,0 +1,3 @@
+{"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","cp":18,"pv":"e2e4 e7e5"}
+{"fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1","evals":[{"depth":20,"pvs":[{"cp":15,"line":"e7e5 g1f3"}]},{"depth":24,"pvs":[{"cp":22,"line":"c7c5 g1f3"}]}]}
+{"fen":"4k3/P7/8/8/8/8/8/4K3 w - - 0 1","mate":3,"pv":"a7a8q e8f7"}

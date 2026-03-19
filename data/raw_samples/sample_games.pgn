@@ -1,0 +1,47 @@
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/sample-train-castle"]
+[Date "2024.01.01"]
+[Round "-"]
+[White "WhiteA"]
+[Black "BlackA"]
+[Result "*"]
+[Split "train"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. O-O *
+
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/sample-val-enpassant"]
+[Date "2024.01.02"]
+[Round "-"]
+[White "WhiteB"]
+[Black "BlackB"]
+[Result "*"]
+[Split "val"]
+
+1. e4 a6 2. e5 d5 3. exd6 *
+
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/sample-test-promotion"]
+[Date "2024.01.03"]
+[Round "-"]
+[White "WhiteC"]
+[Black "BlackC"]
+[Result "*"]
+[SetUp "1"]
+[FEN "4k3/P7/8/8/8/8/8/4K3 w - - 0 1"]
+[Split "test"]
+
+1. a8=Q+ *
+
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/sample-train-check"]
+[Date "2024.01.04"]
+[Round "-"]
+[White "WhiteD"]
+[Black "BlackD"]
+[Result "*"]
+[SetUp "1"]
+[FEN "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1"]
+[Split "train"]
+
+1. Kxe2 *

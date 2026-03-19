@@ -1,0 +1,1 @@
+{"position_id": "chessgpt_conv_cee09aaf161d5834", "source": "waterhorse_chess_data", "schema": "conversation", "fen": "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1", "candidate_moves": [], "messages": [{"role": "user", "content": "How should White respond to this check?"}, {"role": "assistant", "content": "White should prioritize a legal king move or capture on e2."}]}

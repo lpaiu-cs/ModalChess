@@ -1,0 +1,19 @@
+source:
+  name: mate
+  license: MIT
+  version: null
+  date: '2026-03-19'
+  inputs:
+  - data\raw_samples\sample_mate.jsonl
+preprocessing:
+  source_name: mate
+  source_license: MIT
+  source_version: null
+  source_date: '2026-03-19'
+outputs:
+  jsonl: data\pilot\samples\language_mate.jsonl
+report:
+  source: mate
+  rows_seen: 2
+  rows_written: 2
+  drop_reasons: {}

@@ -13,6 +13,7 @@ from torch.utils.data import Dataset
 from modalchess.data.board_state import board_state_to_board, board_to_board_state
 from modalchess.data.fen_codec import fen_to_board_state
 from modalchess.data.fixtures import DEFAULT_CONCEPT_VOCAB, fixture_boards
+from modalchess.data.preprocessing_common import assert_history_fens_contract
 from modalchess.data.schema import PositionSample
 from modalchess.data.tensor_codec import encode_fen_history
 
@@ -34,30 +35,6 @@ class DatasetBuildConfig:
     allow_position_level_split: bool = False
 
 
-def _assert_history_fens(position_id: str, fen: str, history_fens: list[str]) -> None:
-    """히스토리 FEN이 현재 상태와 정렬되어 있는지 검증한다."""
-    if not history_fens:
-        raise ValueError(f"history_fens가 비어 있다: {position_id}")
-    if history_fens[-1] != fen:
-        raise ValueError(f"history_fens[-1]이 현재 fen과 일치하지 않는다: {position_id}")
-    for transition_index, (previous_fen, current_fen) in enumerate(
-        zip(history_fens, history_fens[1:], strict=False)
-    ):
-        board = chess.Board(previous_fen)
-        reachable = False
-        for move in board.legal_moves:
-            next_board = board.copy(stack=False)
-            next_board.push(move)
-            if next_board.fen(en_passant="fen") == current_fen:
-                reachable = True
-                break
-        if not reachable:
-            raise ValueError(
-                "history_fens 전이가 합법적인 단일 수로 연결되지 않는다: "
-                f"{position_id} / step={transition_index}"
-            )
-
-
 class FixtureDataset(Dataset[PositionSample]):
     """엄선된 fixture 포지션으로 구성한 소형 저장소 내 데이터셋."""
 
@@ -77,7 +54,7 @@ def validate_position_sample(
     repetition_count_present: bool = True,
 ) -> None:
     """샘플이 학습 전 만족해야 하는 일관성 규칙을 검증한다."""
-    _assert_history_fens(sample.position_id, sample.fen, sample.history_fens)
+    assert_history_fens_contract(sample.position_id, sample.fen, sample.history_fens)
     board = board_state_to_board(sample.board_state)
     if sample.next_fen is not None and sample.target_move_uci is None:
         raise ValueError(

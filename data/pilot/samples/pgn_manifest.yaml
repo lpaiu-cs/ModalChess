@@ -1,0 +1,58 @@
+source:
+  name: lichess_pgn
+  license: CC0
+  version: null
+  date: '2026-03-19'
+  inputs:
+  - data\raw_samples\sample_games.pgn
+preprocessing:
+  source_name: lichess_pgn
+  source_license: CC0
+  source_version: null
+  source_date: '2026-03-19'
+  standard_only: true
+  rated_only: false
+  include_history: true
+  emit_legal_moves: false
+  min_game_plies: 1
+  max_game_plies: null
+  min_ply_index: 0
+  max_ply_index: null
+  explicit_split_header: Split
+  split_config:
+    train_ratio: 0.8
+    val_ratio: 0.1
+    salt: modalchess
+outputs:
+  train: data\pilot\samples\supervised_train.jsonl
+  val: data\pilot\samples\supervised_val.jsonl
+  test: data\pilot\samples\supervised_test.jsonl
+report:
+  source: lichess_pgn
+  games_seen: 4
+  games_kept: 4
+  positions_written: 14
+  drop_reasons: {}
+  positions_skipped_outside_ply_range: 0
+  split_counts:
+    train: 8
+    val: 5
+    test: 1
+  subset_counts:
+    train:
+      promotion: 0
+      castling: 1
+      en_passant: 0
+      check_evasion: 1
+    val:
+      promotion: 0
+      castling: 0
+      en_passant: 1
+      check_evasion: 0
+    test:
+      promotion: 1
+      castling: 0
+      en_passant: 0
+      check_evasion: 0
+  source_counts:
+    lichess_pgn: 14

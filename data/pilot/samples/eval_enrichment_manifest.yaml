@@ -1,0 +1,33 @@
+source:
+  name: lichess_eval
+  license: CC0
+  version: null
+  date: '2026-03-19'
+  supervised_inputs:
+  - data\pilot\samples\supervised_train.jsonl
+  - data\pilot\samples\supervised_val.jsonl
+  - data\pilot\samples\supervised_test.jsonl
+  eval_inputs:
+  - data\raw_samples\sample_evals.jsonl
+preprocessing:
+  source_name: lichess_eval
+  source_license: CC0
+  source_version: null
+  source_date: '2026-03-19'
+  mate_mode: separate_field
+  mate_cp_sentinel: 100000
+  keep_unmatched_rows: true
+  best_move_field: engine_best_move_uci
+outputs:
+  jsonl: data\pilot\samples\supervised_enriched.jsonl
+report:
+  supervised_rows_seen: 14
+  supervised_rows_written: 14
+  matched_rows: 3
+  unmatched_rows: 11
+  mate_rows: 1
+  eval_index:
+    source: lichess_eval
+    rows_seen: 3
+    rows_indexed: 3
+    drop_reasons: {}

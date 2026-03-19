@@ -1,0 +1,35 @@
+source:
+  name: lichess_puzzle
+  license: CC0
+  version: null
+  date: '2026-03-19'
+  inputs:
+  - data\raw_samples\sample_puzzles.csv
+preprocessing:
+  source_name: lichess_puzzle
+  source_license: CC0
+  source_version: null
+  source_date: '2026-03-19'
+  include_history: true
+  emit_legal_moves: false
+  assign_split: false
+  split_config:
+    train_ratio: 0.8
+    val_ratio: 0.1
+    salt: modalchess
+outputs:
+  jsonl: data\pilot\samples\puzzle_eval.jsonl
+report:
+  source: lichess_puzzle
+  rows_seen: 2
+  rows_written: 2
+  drop_reasons: {}
+  subset_counts:
+    promotion: 0
+    castling: 0
+    en_passant: 0
+    check_evasion: 0
+  split_counts:
+    train: 0
+    val: 0
+    test: 0

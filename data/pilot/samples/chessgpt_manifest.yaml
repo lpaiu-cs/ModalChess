@@ -1,0 +1,21 @@
+source:
+  name: waterhorse_chess_data
+  license: Apache-2.0
+  version: null
+  date: '2026-03-19'
+  inputs:
+  - data\raw_samples\sample_chessgpt.jsonl
+preprocessing:
+  source_name: waterhorse_chess_data
+  source_license: Apache-2.0
+  source_version: null
+  source_date: '2026-03-19'
+outputs:
+  text_jsonl: data\pilot\samples\chessgpt_text_corpus.jsonl
+  conversation_jsonl: data\pilot\samples\chessgpt_conversation_corpus.jsonl
+report:
+  source: waterhorse_chess_data
+  rows_seen: 2
+  text_rows_written: 1
+  conversation_rows_written: 1
+  drop_reasons: {}

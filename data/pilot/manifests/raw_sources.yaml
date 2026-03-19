@@ -1,0 +1,44 @@
+sources:
+  - name: lichess_pgn
+    kind: supervised_backbone
+    source_url: https://database.lichess.org/
+    license: CC0
+    version: monthly dump
+    date_verified: 2026-03-19
+    notes:
+      - Standard PGN backbone source.
+      - Use game_id-aware split only.
+  - name: lichess_puzzle
+    kind: tactical_sidecar
+    source_url: https://database.lichess.org/
+    license: CC0
+    version: monthly dump
+    date_verified: 2026-03-19
+    notes:
+      - Puzzle FEN is before the opponent move.
+      - Apply Moves[0] before extracting supervised target.
+  - name: lichess_eval
+    kind: external_eval
+    source_url: https://database.lichess.org/
+    license: CC0
+    version: monthly dump
+    date_verified: 2026-03-19
+    notes:
+      - Join by FEN first four fields.
+  - name: mate
+    kind: language_sidecar
+    source_url: https://huggingface.co/datasets/OutFlankShu/MATE_DATASET
+    license: MIT
+    version: main@2f9f215
+    date_verified: 2026-03-19
+    notes:
+      - Keep separate from supervised target set until move-order semantics are verified.
+  - name: waterhorse_chess_data
+    kind: auxiliary_language_corpus
+    source_url: https://huggingface.co/datasets/Waterhorse/chess_data
+    license: Apache-2.0
+    version: main@5c37a35
+    date_verified: 2026-03-19
+    notes:
+      - Normalize by schema first.
+      - Do not merge text and conversation rows prematurely.
