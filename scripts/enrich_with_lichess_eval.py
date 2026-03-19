@@ -18,7 +18,7 @@ from modalchess.data.eval_enrichment import EvalEnrichmentConfig, write_enriched
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--supervised", nargs="+", required=True, help="입력 supervised JSONL 경로")
-    parser.add_argument("--evals", nargs="+", required=True, help="입력 evaluation JSONL/CSV 경로")
+    parser.add_argument("--evals", nargs="*", default=[], help="입력 evaluation JSONL/CSV 경로")
     parser.add_argument("--output-path", required=True, help="출력 JSONL 경로")
     parser.add_argument("--source-version", default=None, help="원천 버전 문자열")
     parser.add_argument("--source-date", default=None, help="원천 날짜 문자열")

@@ -4,3 +4,5 @@ __pycache__/
 DS_Store
 outputs/
 *.egg-info/
+data/pilot/raw/
+data/pilot/real_v1/

@@ -208,5 +208,5 @@ def write_enriched_supervised_jsonl(
         "outputs": {"jsonl": str(output_file)},
         "report": report,
     }
-    write_yaml(output_file.parent / "eval_enrichment_manifest.yaml", manifest)
+    write_yaml(output_file.parent / f"{output_file.stem}_enrichment_manifest.yaml", manifest)
     return manifest

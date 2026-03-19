@@ -11,7 +11,7 @@ import chess
 from modalchess.data.preprocessing_common import (
     StableSplitConfig,
     assign_split_by_game_id,
-    load_records_from_path,
+    iter_records_from_path,
     parse_space_or_comma_separated,
     special_rule_flags,
     validate_modalchess_record,
@@ -31,6 +31,7 @@ class PuzzleSidecarBuildConfig:
     include_history: bool = True
     emit_legal_moves: bool = False
     assign_split: bool = False
+    max_rows: int | None = None
     split_config: StableSplitConfig = field(default_factory=StableSplitConfig)
 
 
@@ -97,13 +98,17 @@ def build_puzzle_records(
         "drop_reasons": {},
         "subset_counts": {"promotion": 0, "castling": 0, "en_passant": 0, "check_evasion": 0},
         "split_counts": {"train": 0, "val": 0, "test": 0},
+        "stop_reason": None,
     }
 
     def bump_drop(reason: str) -> None:
         report["drop_reasons"][reason] = int(report["drop_reasons"].get(reason, 0)) + 1
 
     for input_path in input_paths:
-        for row in load_records_from_path(input_path):
+        for row in iter_records_from_path(input_path):
+            if build_config.max_rows is not None and report["rows_written"] >= build_config.max_rows:
+                report["stop_reason"] = "max_rows_reached"
+                return records, report
             report["rows_seen"] += 1
             try:
                 record = transform_puzzle_row(row, build_config)

@@ -57,6 +57,19 @@ def stable_hash_record(
     return stable_hash_text(canonical, prefix=prefix, length=length)
 
 
+def compute_file_sha256(path: str | Path, chunk_size: int = 1 << 20) -> str:
+    """파일의 sha256 checksum을 계산한다."""
+    file_path = Path(path)
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def assign_split_by_game_id(
     game_id: str,
     split_config: StableSplitConfig | None = None,
@@ -264,52 +277,84 @@ def _flatten_pickled_payload(payload: Any) -> list[dict[str, Any]]:
 
 
 def _load_records_from_text_stream(stream: TextIO, suffix: str) -> list[dict[str, Any]]:
+    return list(_iter_records_from_text_stream(stream, suffix))
+
+
+def _iter_records_from_text_stream(stream: TextIO, suffix: str) -> Iterator[dict[str, Any]]:
     if suffix == ".jsonl":
-        return [json.loads(line) for line in stream if line.strip()]
+        for line in stream:
+            if line.strip():
+                yield json.loads(line)
+        return
     if suffix == ".json":
         payload = json.load(stream)
         if isinstance(payload, list):
-            return [dict(row) for row in payload if isinstance(row, Mapping)]
+            for row in payload:
+                if isinstance(row, Mapping):
+                    yield dict(row)
+            return
         if isinstance(payload, Mapping):
             if "records" in payload and isinstance(payload["records"], list):
-                return [dict(row) for row in payload["records"] if isinstance(row, Mapping)]
+                for row in payload["records"]:
+                    if isinstance(row, Mapping):
+                        yield dict(row)
+                return
             raise ValueError("JSON payload에서 records 리스트를 찾지 못했다.")
         raise ValueError("지원하지 않는 JSON payload 형식이다.")
     if suffix == ".csv":
-        return [dict(row) for row in csv.DictReader(stream)]
+        for row in csv.DictReader(stream):
+            yield dict(row)
+        return
     raise ValueError(f"지원하지 않는 구조화 파일 형식이다: {suffix}")
 
 
 def _load_records_from_zip(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
+    return list(_iter_records_from_zip(path))
+
+
+def _iter_records_from_zip(path: Path) -> Iterator[dict[str, Any]]:
     with zipfile.ZipFile(path) as archive:
         for member in archive.namelist():
             if member.endswith("/"):
                 continue
+            member_path = Path(member)
+            if "__MACOSX" in member_path.parts:
+                continue
+            if member_path.name.startswith("._") or member_path.name == ".DS_Store":
+                continue
             data = archive.read(member)
-            inner_suffixes = Path(member).suffixes
+            inner_suffixes = member_path.suffixes
             base_suffix = ""
             for suffix in reversed(inner_suffixes):
                 if suffix in {".jsonl", ".json", ".csv", ".pkl", ".pickle"}:
                     base_suffix = suffix
                     break
             if base_suffix in {".jsonl", ".json", ".csv"}:
-                records.extend(_load_records_from_text_stream(_open_text_stream_from_bytes(data, member), base_suffix))
+                yield from _iter_records_from_text_stream(_open_text_stream_from_bytes(data, member), base_suffix)
                 continue
             if base_suffix in {".pkl", ".pickle"}:
-                records.extend(_flatten_pickled_payload(pickle.loads(data)))
-    return records
+                yield from _flatten_pickled_payload(pickle.loads(data))
 
 
 def load_records_from_path(path: str | Path) -> list[dict[str, Any]]:
     """CSV/JSON/JSONL/ZIP 계열 입력을 dict 레코드 리스트로 읽는다."""
+    return list(iter_records_from_path(path))
+
+
+def iter_records_from_path(path: str | Path) -> Iterator[dict[str, Any]]:
+    """CSV/JSON/JSONL/ZIP 계열 입력을 streaming으로 순회한다."""
     input_path = Path(path)
     if input_path.suffix == ".zip":
-        return _load_records_from_zip(input_path)
+        yield from _iter_records_from_zip(input_path)
+        return
     suffixes = input_path.suffixes
-    base_suffix = suffixes[-2] if suffixes and suffixes[-1] in COMPRESSION_SUFFIXES and len(suffixes) >= 2 else input_path.suffix
+    base_suffix = (
+        suffixes[-2]
+        if suffixes and suffixes[-1] in COMPRESSION_SUFFIXES and len(suffixes) >= 2
+        else input_path.suffix
+    )
     with open_text_input(input_path) as handle:
-        return _load_records_from_text_stream(handle, base_suffix)
+        yield from _iter_records_from_text_stream(handle, base_suffix)
 
 
 def summarize_subset_counts(records: Iterable[Mapping[str, Any]]) -> dict[str, int]:
@@ -340,4 +385,4 @@ def count_by_split(records: Iterable[Mapping[str, Any]]) -> dict[str, int]:
 def iter_records(paths: Iterable[str | Path]) -> Iterator[dict[str, Any]]:
     """여러 입력 경로를 순회하며 레코드를 방출한다."""
     for path in paths:
-        yield from load_records_from_path(path)
+        yield from iter_records_from_path(path)

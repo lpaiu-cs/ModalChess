@@ -1,0 +1,39 @@
+generated_at: '2026-03-19T14:25:54+00:00'
+artifacts:
+- source_name: lichess_standard_pgn
+  source_url: https://database.lichess.org/standard/lichess_db_standard_rated_2015-01.pgn.zst
+  version: 2015-01
+  local_path: data\pilot\raw\lichess\standard\lichess_db_standard_rated_2015-01.pgn.zst
+  file_size: 285559460
+  checksum: 9061f9dc0ab0d8710886d1745b5ca83a27b61fe5e504f9dcd549218fa3598f57
+  fetch_timestamp: '2026-03-19T14:10:24+00:00'
+  status: downloaded
+  note: Fri, 04 Nov 2022 16:34:59 GMT
+- source_name: lichess_puzzle
+  source_url: https://database.lichess.org/lichess_db_puzzle.csv.zst
+  version: Sat, 07 Mar 2026 08:08:55 GMT
+  local_path: data\pilot\raw\lichess\puzzles\lichess_db_puzzle.csv.zst
+  file_size: 290840973
+  checksum: edf226a8b63fa247f4ebfcaf5bf36f063f852dbbdf24a6726de6b7b87905dd1a
+  fetch_timestamp: '2026-03-19T14:17:52+00:00'
+  status: downloaded
+  note: Sat, 07 Mar 2026 08:08:55 GMT
+- source_name: lichess_eval
+  source_url: https://database.lichess.org/lichess_db_eval.jsonl.zst
+  version: Fri, 06 Mar 2026 19:36:29 GMT
+  local_path: null
+  file_size: 19808526709
+  checksum: null
+  fetch_timestamp: '2026-03-19T14:25:29+00:00'
+  status: snapshot_only
+  note: Artifact is ~19.8 GB. Kept as snapshot-only by default for bounded pilot builds;
+    pass --materialize-eval to download.
+- source_name: mate_dataset
+  source_url: https://huggingface.co/datasets/OutFlankShu/MATE_DATASET
+  version: 2f9f2154d32377a0f2eee375fc0047b674348134
+  local_path: data\pilot\raw\hf\mate_dataset
+  file_size: null
+  checksum: 2f9f2154d32377a0f2eee375fc0047b674348134
+  fetch_timestamp: '2026-03-19T14:25:30+00:00'
+  status: snapshot_downloaded
+  note: null

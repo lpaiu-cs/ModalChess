@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 import chess
@@ -36,13 +37,68 @@ def _pick_first(row: Mapping[str, Any], candidates: tuple[str, ...]) -> Any:
     return None
 
 
+FEN_IN_TEXT_PATTERN = re.compile(r'FEN[^"]*"([^"]+)"')
+MOVE_PATTERN = re.compile(r"Move([A-Z]):([a-h][1-8][a-h][1-8][nbrq]?)")
+
+
+def _extract_fen_from_prompt_text(text: str) -> str | None:
+    match = FEN_IN_TEXT_PATTERN.search(text)
+    return match.group(1).strip() if match else None
+
+
+def _extract_candidate_moves_from_prompt_text(text: str) -> list[str]:
+    moves: list[str] = []
+    for _, move in MOVE_PATTERN.findall(text):
+        if move not in moves:
+            moves.append(move)
+    return moves
+
+
+def _segment_between(text: str, start_marker: str, end_markers: tuple[str, ...]) -> str | None:
+    start_index = text.find(start_marker)
+    if start_index < 0:
+        return None
+    start_index += len(start_marker)
+    end_index = len(text)
+    for end_marker in end_markers:
+        candidate_index = text.find(end_marker, start_index)
+        if candidate_index >= 0:
+            end_index = min(end_index, candidate_index)
+    segment = text[start_index:end_index].strip()
+    return segment or None
+
+
+def _extract_strategy_tactic_texts(text: str) -> tuple[str | None, str | None]:
+    strategies: list[str] = []
+    tactics: list[str] = []
+    for label in ("A", "B", "C", "D"):
+        move_token = f"Move{label}:"
+        tactic_token = f"Tactic{label}:"
+        strategy = _segment_between(text, move_token, (tactic_token, f"Move{chr(ord(label) + 1)}:", "Tactic"))
+        if strategy is not None:
+            comma_index = strategy.find(",")
+            if comma_index >= 0:
+                strategy = strategy[comma_index + 1 :].strip()
+            strategies.append(f"{label}: {strategy}")
+        tactic = _segment_between(text, tactic_token, (f"Move{chr(ord(label) + 1)}:", f"Tactic{chr(ord(label) + 1)}:"))
+        if tactic is not None:
+            tactics.append(f"{label}: {tactic}")
+    strategy_text = " || ".join(strategies) if strategies else None
+    tactic_text = " || ".join(tactics) if tactics else None
+    return strategy_text, tactic_text
+
+
 def transform_mate_row(
     row: Mapping[str, Any],
     config: MateSidecarBuildConfig | None = None,
 ) -> dict[str, Any]:
     """MATE row를 language sidecar JSONL 레코드로 변환한다."""
     build_config = config or MateSidecarBuildConfig()
+    prompt_input = str(_pick_first(row, ("input", "prompt", "instruction")) or "").strip()
     fen = str(_pick_first(row, ("fen", "FEN", "position")) or "").strip()
+    if not fen and prompt_input:
+        extracted_fen = _extract_fen_from_prompt_text(prompt_input)
+        fen = extracted_fen or ""
     if not fen:
         raise ValueError("MATE row에 fen이 없다.")
     chess.Board(fen)
@@ -63,6 +119,12 @@ def transform_mate_row(
     tactic_text = _pick_first(row, ("tactic_text", "tactic", "Tactic"))
     candidate_moves_raw = _pick_first(row, ("candidate_moves", "moves", "Moves", "move_candidates"))
     candidate_moves = parse_space_or_comma_separated(candidate_moves_raw)
+    if not candidate_moves and prompt_input:
+        candidate_moves = _extract_candidate_moves_from_prompt_text(prompt_input)
+    if (strategy_text is None or tactic_text is None) and prompt_input:
+        prompt_strategy_text, prompt_tactic_text = _extract_strategy_tactic_texts(prompt_input)
+        strategy_text = strategy_text or prompt_strategy_text
+        tactic_text = tactic_text or prompt_tactic_text
 
     return {
         "position_id": position_id,
@@ -72,6 +134,9 @@ def transform_mate_row(
         "candidate_moves": candidate_moves,
         "strategy_text": str(strategy_text) if strategy_text is not None else None,
         "tactic_text": str(tactic_text) if tactic_text is not None else None,
+        "preferred_move": str(_pick_first(row, ("output", "label_move", "best_move"))).strip()
+        if _pick_first(row, ("output", "label_move", "best_move")) is not None
+        else None,
     }
 
 

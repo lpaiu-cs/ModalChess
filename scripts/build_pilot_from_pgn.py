@@ -29,6 +29,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-game-plies", type=int, default=None, help="최대 game ply 수")
     parser.add_argument("--min-ply-index", type=int, default=0, help="포지션 추출 최소 ply index")
     parser.add_argument("--max-ply-index", type=int, default=None, help="포지션 추출 최대 ply index")
+    parser.add_argument("--max-games", type=int, default=None, help="최대 유지 game 수")
+    parser.add_argument("--max-positions", type=int, default=None, help="전체 최대 position 수")
+    parser.add_argument(
+        "--max-positions-per-game",
+        type=int,
+        default=None,
+        help="game별 최대 position 수",
+    )
+    parser.add_argument(
+        "--sample-every-n-plies",
+        type=int,
+        default=1,
+        help="game별 deterministic phase를 둔 stride sampling",
+    )
+    parser.add_argument("--random-seed", type=int, default=7, help="sampling seed")
     parser.add_argument("--train-ratio", type=float, default=0.8, help="train split 비율")
     parser.add_argument("--val-ratio", type=float, default=0.1, help="val split 비율")
     parser.add_argument("--split-salt", default="modalchess", help="stable split salt")
@@ -47,6 +62,11 @@ def main() -> None:
         max_game_plies=args.max_game_plies,
         min_ply_index=args.min_ply_index,
         max_ply_index=args.max_ply_index,
+        max_games=args.max_games,
+        max_positions=args.max_positions,
+        max_positions_per_game=args.max_positions_per_game,
+        sample_every_n_plies=args.sample_every_n_plies,
+        random_seed=args.random_seed,
         split_config=StableSplitConfig(
             train_ratio=args.train_ratio,
             val_ratio=args.val_ratio,

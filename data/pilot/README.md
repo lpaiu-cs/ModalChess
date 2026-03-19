@@ -4,20 +4,33 @@
 
 ## 지원 파이프라인
 
+- `scripts/fetch_pilot_sources.py`
+  - raw source acquisition을 fetch/snapshot 단계로 분리한다.
+  - `data/pilot/manifests/raw_fetch_lock.yaml`에 source URL, version/date, local path, checksum을 잠근다.
 - `scripts/build_pilot_from_pgn.py`
   - Lichess PGN을 supervised backbone JSONL로 변환한다.
   - 출력은 `supervised_train.jsonl`, `supervised_val.jsonl`, `supervised_test.jsonl`이다.
+  - 대형 dump용 bounded flag:
+    - `--max-games`
+    - `--max-positions`
+    - `--max-positions-per-game`
+    - `--sample-every-n-plies`
+    - `--random-seed`
 - `scripts/build_puzzle_sidecar.py`
   - Lichess puzzle 원천을 `puzzle_eval.jsonl` 같은 sidecar 세트로 만든다.
   - 퍼즐 FEN은 첫 move 이전 상태이므로 `Moves[0]`를 먼저 적용한 뒤 `Moves[1]`를 target으로 잡는다.
+  - 큰 원천에는 `--max-rows`로 bounded build를 권장한다.
 - `scripts/enrich_with_lichess_eval.py`
   - supervised JSONL에 evaluation row를 조인한다.
   - 조인 키는 FEN의 첫 네 필드다.
+  - eval artifact를 materialize하지 못한 경우 `--evals` 없이 실행해 enriched copy-equivalent 파일을 남길 수 있다.
 - `scripts/build_mate_sidecar.py`
   - MATE 데이터를 language sidecar JSONL로 정규화한다.
   - 현재는 supervised target set으로 합치지 않는다.
 - `scripts/normalize_chessgpt_corpus.py`
   - Waterhorse/chess_data를 text corpus와 conversation corpus로 분리 정규화한다.
+- `scripts/report_pilot_dataset.py`
+  - 실제 pilot supervised split의 QA gate report를 JSON/Markdown으로 기록한다.
 
 ## JSONL 계약
 
@@ -65,4 +78,5 @@ python scripts/build_puzzle_sidecar.py data/raw_samples/sample_puzzles.csv --out
 python scripts/enrich_with_lichess_eval.py --supervised data/pilot/samples/supervised_train.jsonl data/pilot/samples/supervised_val.jsonl data/pilot/samples/supervised_test.jsonl --evals data/raw_samples/sample_evals.jsonl --output-path data/pilot/samples/supervised_enriched.jsonl --source-date 2026-03-19
 python scripts/build_mate_sidecar.py data/raw_samples/sample_mate.jsonl --output-path data/pilot/samples/language_mate.jsonl --source-date 2026-03-19
 python scripts/normalize_chessgpt_corpus.py data/raw_samples/sample_chessgpt.jsonl --output-dir data/pilot/samples --source-date 2026-03-19
+python scripts/report_pilot_dataset.py --input-root data/pilot/samples --output-dir data/pilot/samples
 ```

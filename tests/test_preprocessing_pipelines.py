@@ -14,6 +14,49 @@ from modalchess.data.preprocessing_common import (
 from modalchess.data.puzzle_sidecar import transform_puzzle_row
 
 
+def _write_multi_game_pgn(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                '[Event "Rated Blitz game"]',
+                '[Site "https://lichess.org/game-a"]',
+                '[Date "2024.01.01"]',
+                '[Round "-"]',
+                '[White "WhiteA"]',
+                '[Black "BlackA"]',
+                '[Result "*"]',
+                '[Split "train"]',
+                "",
+                "1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 *",
+                "",
+                '[Event "Rated Blitz game"]',
+                '[Site "https://lichess.org/game-b"]',
+                '[Date "2024.01.02"]',
+                '[Round "-"]',
+                '[White "WhiteB"]',
+                '[Black "BlackB"]',
+                '[Result "*"]',
+                '[Split "val"]',
+                "",
+                "1. d4 d5 2. c4 e6 3. Nc3 Nf6 *",
+                "",
+                '[Event "Rated Blitz game"]',
+                '[Site "https://lichess.org/game-c"]',
+                '[Date "2024.01.03"]',
+                '[Round "-"]',
+                '[White "WhiteC"]',
+                '[Black "BlackC"]',
+                '[Result "*"]',
+                '[Split "test"]',
+                "",
+                "1. c4 e5 2. Nc3 Nf6 3. Nf3 Nc6 *",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_puzzle_transform_applies_first_move_before_target_extraction() -> None:
     row = {
         "PuzzleId": "p1",
@@ -166,3 +209,66 @@ def test_game_id_split_is_stable_and_game_level(tmp_path: Path) -> None:
     game_id = derive_pgn_game_id(headers)
     expected_split = assign_split_by_game_id(game_id, config.split_config)
     assert non_empty_splits[0] == expected_split
+
+
+def test_pgn_builder_respects_max_games_limit(tmp_path: Path) -> None:
+    pgn_path = tmp_path / "multi_games.pgn"
+    _write_multi_game_pgn(pgn_path)
+
+    records_by_split, report = build_supervised_records_from_pgn(
+        [pgn_path],
+        PgnPilotBuildConfig(max_games=1),
+    )
+
+    assert report["games_kept"] == 1
+    assert report["stop_reason"] == "max_games_reached"
+    assert sum(len(records) for records in records_by_split.values()) == 6
+
+
+def test_pgn_builder_respects_max_positions_limit(tmp_path: Path) -> None:
+    pgn_path = tmp_path / "limited_positions.pgn"
+    _write_multi_game_pgn(pgn_path)
+
+    records_by_split, report = build_supervised_records_from_pgn(
+        [pgn_path],
+        PgnPilotBuildConfig(max_positions=4),
+    )
+
+    assert report["positions_written"] == 4
+    assert report["stop_reason"] == "max_positions_reached"
+    assert sum(len(records) for records in records_by_split.values()) == 4
+
+
+def test_pgn_builder_sample_every_n_plies_is_deterministic(tmp_path: Path) -> None:
+    pgn_path = tmp_path / "deterministic_sampling.pgn"
+    _write_multi_game_pgn(pgn_path)
+
+    config = PgnPilotBuildConfig(sample_every_n_plies=3, random_seed=17)
+    first_records, _ = build_supervised_records_from_pgn([pgn_path], config)
+    second_records, _ = build_supervised_records_from_pgn([pgn_path], config)
+
+    def flatten_targets(records_by_split: dict[str, list[dict[str, object]]]) -> list[str]:
+        flat: list[str] = []
+        for split_name in ("train", "val", "test"):
+            flat.extend(str(row["target_move_uci"]) for row in records_by_split[split_name])
+        return flat
+
+    assert flatten_targets(first_records) == flatten_targets(second_records)
+
+
+def test_pgn_builder_respects_max_positions_per_game(tmp_path: Path) -> None:
+    pgn_path = tmp_path / "per_game_cap.pgn"
+    _write_multi_game_pgn(pgn_path)
+
+    records_by_split, report = build_supervised_records_from_pgn(
+        [pgn_path],
+        PgnPilotBuildConfig(max_positions_per_game=2),
+    )
+
+    per_game_counts: dict[str, int] = {}
+    for split_records in records_by_split.values():
+        for row in split_records:
+            per_game_counts[str(row["game_id"])] = per_game_counts.get(str(row["game_id"]), 0) + 1
+    assert per_game_counts
+    assert all(count <= 2 for count in per_game_counts.values())
+    assert report["positions_skipped_per_game_cap"] > 0

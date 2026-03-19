@@ -9,7 +9,9 @@ description = "Spatial chess research core for ModalChess."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "huggingface_hub>=0.30",
   "PyYAML>=6.0",
+  "requests>=2.31",
   "python-chess>=1.999",
   "torch>=2.2",
   "transformers>=4.40",

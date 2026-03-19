@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,11 @@ class PgnPilotBuildConfig:
     max_game_plies: int | None = None
     min_ply_index: int = 0
     max_ply_index: int | None = None
+    max_games: int | None = None
+    max_positions: int | None = None
+    max_positions_per_game: int | None = None
+    sample_every_n_plies: int = 1
+    random_seed: int = 7
     explicit_split_header: str = "Split"
     split_config: StableSplitConfig = field(default_factory=StableSplitConfig)
 
@@ -76,6 +82,24 @@ def _resolve_game_split(headers: dict[str, str], game_id: str, config: PgnPilotB
     if explicit_split in {"train", "val", "test"}:
         return explicit_split
     return assign_split_by_game_id(game_id, config.split_config)
+
+
+def _sampling_phase_for_game(game_id: str, config: PgnPilotBuildConfig) -> int:
+    if config.sample_every_n_plies <= 1:
+        return 0
+    digest = hashlib.sha256(f"{config.random_seed}:{game_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], byteorder="big") % config.sample_every_n_plies
+
+
+def _within_sampling_stride(
+    *,
+    ply_index: int,
+    phase: int,
+    config: PgnPilotBuildConfig,
+) -> bool:
+    if config.sample_every_n_plies <= 1:
+        return True
+    return (ply_index - phase) % config.sample_every_n_plies == 0
 
 
 def _base_record_from_position(
@@ -129,18 +153,30 @@ def build_supervised_records_from_pgn(
         "positions_written": 0,
         "drop_reasons": {},
         "positions_skipped_outside_ply_range": 0,
+        "positions_skipped_sampling_stride": 0,
+        "positions_skipped_per_game_cap": 0,
         "split_counts": {"train": 0, "val": 0, "test": 0},
         "subset_counts": subset_counts,
         "source_counts": {build_config.source_name: 0},
+        "stop_reason": None,
     }
 
     def bump_drop(reason: str) -> None:
         report["drop_reasons"][reason] = int(report["drop_reasons"].get(reason, 0)) + 1
 
+    stop_processing = False
     for input_path in input_paths:
         path = Path(input_path)
         with open_text_input(path) as handle:
             while True:
+                if build_config.max_games is not None and report["games_kept"] >= build_config.max_games:
+                    report["stop_reason"] = "max_games_reached"
+                    stop_processing = True
+                    break
+                if build_config.max_positions is not None and report["positions_written"] >= build_config.max_positions:
+                    report["stop_reason"] = "max_positions_reached"
+                    stop_processing = True
+                    break
                 game = chess.pgn.read_game(handle)
                 if game is None:
                     break
@@ -166,9 +202,15 @@ def build_supervised_records_from_pgn(
                 game_id = derive_pgn_game_id(headers)
                 split_name = _resolve_game_split(headers, game_id, build_config)
                 history = [board.fen(en_passant="fen")]
+                phase = _sampling_phase_for_game(game_id, build_config)
+                positions_written_for_game = 0
                 report["games_kept"] += 1
 
                 for ply_index, move in enumerate(moves):
+                    if build_config.max_positions is not None and report["positions_written"] >= build_config.max_positions:
+                        report["stop_reason"] = "max_positions_reached"
+                        stop_processing = True
+                        break
                     current_fen = board.fen(en_passant="fen")
                     within_min = ply_index >= build_config.min_ply_index
                     within_max = (
@@ -179,7 +221,17 @@ def build_supervised_records_from_pgn(
                     next_board = board.copy(stack=False)
                     next_board.push(move)
                     next_fen = next_board.fen(en_passant="fen")
-                    if within_min and within_max:
+                    within_stride = _within_sampling_stride(
+                        ply_index=ply_index,
+                        phase=phase,
+                        config=build_config,
+                    )
+                    under_game_cap = (
+                        True
+                        if build_config.max_positions_per_game is None
+                        else positions_written_for_game < build_config.max_positions_per_game
+                    )
+                    if within_min and within_max and within_stride and under_game_cap:
                         history_snapshot = list(history) if build_config.include_history else None
                         record = _base_record_from_position(
                             game_id=game_id,
@@ -199,11 +251,21 @@ def build_supervised_records_from_pgn(
                             subset_counts[split_name][key] += int(active)
                         report["split_counts"][split_name] += 1
                         report["positions_written"] += 1
+                        positions_written_for_game += 1
                         report["source_counts"][build_config.source_name] += 1
                     else:
-                        report["positions_skipped_outside_ply_range"] += 1
+                        if not (within_min and within_max):
+                            report["positions_skipped_outside_ply_range"] += 1
+                        elif not within_stride:
+                            report["positions_skipped_sampling_stride"] += 1
+                        else:
+                            report["positions_skipped_per_game_cap"] += 1
                     board.push(move)
                     history.append(board.fen(en_passant="fen"))
+                if stop_processing:
+                    break
+        if stop_processing:
+            break
     return records_by_split, report
 
 

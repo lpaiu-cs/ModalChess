@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-date", default=None, help="원천 날짜 문자열")
     parser.add_argument("--assign-split", action="store_true", help="game_id 기준 stable split 부여")
     parser.add_argument("--emit-legal-moves", action="store_true", help="debug용 legal_moves_uci를 기록")
+    parser.add_argument("--max-rows", type=int, default=None, help="최대 유지 row 수")
     parser.add_argument("--train-ratio", type=float, default=0.8, help="train split 비율")
     parser.add_argument("--val-ratio", type=float, default=0.1, help="val split 비율")
     parser.add_argument("--split-salt", default="modalchess", help="stable split salt")
@@ -37,6 +38,7 @@ def main() -> None:
         source_date=args.source_date,
         emit_legal_moves=args.emit_legal_moves,
         assign_split=args.assign_split,
+        max_rows=args.max_rows,
         split_config=StableSplitConfig(
             train_ratio=args.train_ratio,
             val_ratio=args.val_ratio,
