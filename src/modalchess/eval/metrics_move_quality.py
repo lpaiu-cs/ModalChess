@@ -11,6 +11,17 @@ from modalchess.data.move_codec import uci_to_factorized
 from modalchess.models.heads.policy_factorized import score_factorized_moves
 
 
+def _prediction_matches_target(
+    prediction: dict[str, object],
+    target: dict[str, int],
+) -> bool:
+    return (
+        prediction["src_square"] == target["src_square"]
+        and prediction["dst_square"] == target["dst_square"]
+        and prediction["promotion"] == target["promotion"]
+    )
+
+
 def collect_move_prediction_rows(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, object],
@@ -51,20 +62,30 @@ def collect_move_prediction_rows(
                     "score": float(scores[ranking[rank_index]].detach().cpu()),
                 }
             )
+        target_payload = {
+            "src_square": target_tuple[0],
+            "dst_square": target_tuple[1],
+            "promotion": target_tuple[2],
+        }
+        topk_hits = {
+            f"is_correct_top_{k}": any(
+                _prediction_matches_target(prediction, target_payload)
+                for prediction in top_predictions[:k]
+            )
+            for k in topk
+        }
         rows.append(
             {
                 "batch_index": index,
                 "position_id": batch["position_ids"][index],
                 "fen": batch["fens"][index],
                 "target_move_uci": target_move,
-                "target_move": {
-                    "src_square": target_tuple[0],
-                    "dst_square": target_tuple[1],
-                    "promotion": target_tuple[2],
-                },
+                "target_move": target_payload,
                 "predicted_top_1": top_predictions[0],
                 "top_predictions": top_predictions,
-                "is_correct_top_1": ranked_moves[0] == target_tuple,
+                "is_correct_top_1": top_predictions[0]["src_square"] == target_tuple[0]
+                and top_predictions[0]["dst_square"] == target_tuple[1]
+                and top_predictions[0]["promotion"] == target_tuple[2],
                 "target_move_nll": float(
                     F.cross_entropy(
                         scores.unsqueeze(0),
@@ -75,6 +96,7 @@ def collect_move_prediction_rows(
                 "is_castling": bool(batch["target_is_castling"][index].item()),
                 "is_en_passant": bool(batch["target_is_en_passant"][index].item()),
                 "is_check_evasion": bool(batch["subset_check_evasion"][index].item()),
+                **topk_hits,
             }
         )
     return rows
@@ -83,42 +105,54 @@ def collect_move_prediction_rows(
 def summarize_move_prediction_rows(
     rows: list[dict[str, object]],
     topk: Sequence[int] = (1, 3, 5),
-) -> dict[str, float]:
+) -> dict[str, object]:
     """샘플별 예측 행으로부터 최종 move-quality 지표를 계산한다."""
     correct = {k: 0 for k in topk}
     subset_correct = {
-        "promotion": 0,
-        "castling": 0,
-        "en_passant": 0,
-        "check_evasion": 0,
+        "promotion": {k: 0 for k in topk},
+        "castling": {k: 0 for k in topk},
+        "en_passant": {k: 0 for k in topk},
+        "check_evasion": {k: 0 for k in topk},
     }
     subset_total = {name: 0 for name in subset_correct}
+    subset_nll = {name: 0.0 for name in subset_correct}
     nll_total = 0.0
     for row in rows:
         target = row["target_move"]
         nll_total += float(row["target_move_nll"])
         for k in topk:
-            if any(
-                prediction["src_square"] == target["src_square"]
-                and prediction["dst_square"] == target["dst_square"]
-                and prediction["promotion"] == target["promotion"]
-                for prediction in row["top_predictions"][:k]
-            ):
+            if any(_prediction_matches_target(prediction, target) for prediction in row["top_predictions"][:k]):
                 correct[k] += 1
         for subset_name in subset_total:
             flag_name = f"is_{subset_name}"
             if row[flag_name]:
                 subset_total[subset_name] += 1
-                subset_correct[subset_name] += int(row["is_correct_top_1"])
+                subset_nll[subset_name] += float(row["target_move_nll"])
+                for k in topk:
+                    subset_correct[subset_name][k] += int(row[f"is_correct_top_{k}"])
     total = len(rows)
-    metrics = {}
+    metrics: dict[str, object] = {"num_move_samples": total}
     for k in topk:
-        metrics[f"top_{k}_move_accuracy"] = float(correct[k] / total) if total else 0.0
+        accuracy = float(correct[k] / total) if total else 0.0
+        metrics[f"top_{k}"] = accuracy
+        metrics[f"top_{k}_move_accuracy"] = accuracy
     metrics["target_move_nll"] = nll_total / total if total else 0.0
+    subset_metrics: dict[str, dict[str, float | int]] = {}
     for subset_name, subset_count in subset_total.items():
-        metrics[f"{subset_name}_top_1_move_accuracy"] = (
-            float(subset_correct[subset_name] / subset_count) if subset_count else 0.0
-        )
+        subset_payload: dict[str, float | int] = {"count": subset_count}
+        for k in topk:
+            subset_accuracy = (
+                float(subset_correct[subset_name][k] / subset_count) if subset_count else 0.0
+            )
+            subset_payload[f"top_{k}"] = subset_accuracy
+            subset_payload[f"top_{k}_move_accuracy"] = subset_accuracy
+        subset_payload["target_move_nll"] = subset_nll[subset_name] / subset_count if subset_count else 0.0
+        subset_metrics[subset_name] = subset_payload
+        metrics[f"{subset_name}_count"] = subset_count
+        for k in topk:
+            metrics[f"{subset_name}_top_{k}"] = float(subset_payload[f"top_{k}"])
+        metrics[f"{subset_name}_target_move_nll"] = float(subset_payload["target_move_nll"])
+    metrics["subsets"] = subset_metrics
     return metrics
 
 
@@ -126,7 +160,7 @@ def compute_move_quality_metrics(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, object],
     topk: Sequence[int] = (1, 3, 5),
-) -> dict[str, float]:
+) -> dict[str, object]:
     """평가 시점 합법 수 필터링을 사용해 top-k 이동 정확도를 계산한다."""
     rows = collect_move_prediction_rows(outputs, batch, topk=topk)
     return summarize_move_prediction_rows(rows, topk=topk)

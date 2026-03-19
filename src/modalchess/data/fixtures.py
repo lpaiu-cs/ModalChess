@@ -77,6 +77,13 @@ FIXTURE_SPECS: tuple[FixtureSpec, ...] = (
         concept_tags=["check", "capture", "fork"],
         engine_eval_cp=500.0,
     ),
+    FixtureSpec(
+        position_id="check_evasion",
+        start_fen="4k3/8/8/8/8/8/4r3/4K3 w - - 0 1",
+        target_move_uci="e1e2",
+        concept_tags=["check", "king_safety"],
+        engine_eval_cp=-150.0,
+    ),
 )
 
 

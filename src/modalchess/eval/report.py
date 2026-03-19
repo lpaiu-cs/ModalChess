@@ -8,6 +8,22 @@ from pathlib import Path
 from typing import Any
 
 
+def flatten_metrics(
+    metrics: dict[str, Any],
+    prefix: str = "",
+) -> dict[str, int | float | str | bool]:
+    """중첩된 metric 딕셔너리를 CSV 기록용 평탄 구조로 변환한다."""
+    flattened: dict[str, int | float | str | bool] = {}
+    for key, value in metrics.items():
+        flat_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flattened.update(flatten_metrics(value, prefix=flat_key))
+            continue
+        if isinstance(value, (int, float, str, bool)):
+            flattened[flat_key] = value
+    return flattened
+
+
 def write_report(metrics: dict[str, Any], output_dir: str | Path, name: str = "eval_report") -> dict[str, str]:
     """JSON 및 CSV 형식의 평가 리포트를 기록한다."""
     output_dir = Path(output_dir)
@@ -15,12 +31,12 @@ def write_report(metrics: dict[str, Any], output_dir: str | Path, name: str = "e
     json_path = output_dir / f"{name}.json"
     csv_path = output_dir / f"{name}.csv"
     json_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    flattened = flatten_metrics(metrics)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["metric", "value"])
-        for key, value in metrics.items():
-            if isinstance(value, (int, float, str)):
-                writer.writerow([key, value])
+        for key, value in flattened.items():
+            writer.writerow([key, value])
     return {"json": str(json_path), "csv": str(csv_path)}
 
 

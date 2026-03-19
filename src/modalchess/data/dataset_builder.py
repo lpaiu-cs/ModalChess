@@ -29,6 +29,7 @@ class DatasetBuildConfig:
     split_seed: int = 7
     train_ratio: float = 0.8
     val_ratio: float = 0.1
+    split_field: str | None = None
     require_repetition_count: bool = False
     allow_position_level_split: bool = False
 
@@ -180,55 +181,104 @@ def _split_by_game_id(
     return filtered
 
 
+def _load_jsonl_records(dataset_path: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    with dataset_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            records.append(json.loads(line))
+    return records
+
+
+def _resolve_split_field(records: list[dict[str, object]], config: DatasetBuildConfig) -> str | None:
+    if config.split_field is not None:
+        return config.split_field
+    if not records:
+        return None
+    split_present = [("split" in record) for record in records]
+    if any(split_present) and not all(split_present):
+        raise ValueError("split 필드는 모든 JSONL 레코드에 일관되게 존재해야 한다.")
+    if all(split_present):
+        return "split"
+    return None
+
+
+def _filter_records_by_split_field(
+    records: list[dict[str, object]],
+    split_field: str,
+    split_name: str,
+) -> list[dict[str, object]]:
+    supported_splits = {"train", "val", "test", "all"}
+    if split_name not in supported_splits:
+        raise ValueError(f"지원하지 않는 split: {split_name}")
+    if split_name == "all":
+        return records
+    filtered: list[dict[str, object]] = []
+    for record in records:
+        if split_field not in record:
+            raise ValueError(f"{split_field} 필드가 누락된 JSONL 레코드가 있다: {record['position_id']}")
+        record_split = record[split_field]
+        if record_split not in {"train", "val", "test"}:
+            raise ValueError(
+                f"{split_field} 값은 train/val/test 중 하나여야 한다: "
+                f"{record['position_id']} / {record_split}"
+            )
+        if record_split == split_name:
+            filtered.append(record)
+    return filtered
+
+
 def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     """JSONL 기반 실제 연구 데이터 샘플을 생성한다."""
     if config.dataset_path is None:
         raise ValueError("JSONL 데이터셋에는 dataset_path가 필요하다.")
     dataset_path = Path(config.dataset_path)
+    records = _load_jsonl_records(dataset_path)
+    split_field = _resolve_split_field(records, config)
+    if split_field is not None:
+        records = _filter_records_by_split_field(records, split_field, config.split)
     samples: list[PositionSample] = []
-    with dataset_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            fen = record["fen"]
-            history_fens = record.get("history_fens") or [fen]
-            board_state = fen_to_board_state(fen)
-            board = board_state_to_board(board_state)
-            computed_legal_moves_uci = [move.uci() for move in board.legal_moves]
-            provided_legal_moves_uci = record.get("legal_moves_uci")
-            if provided_legal_moves_uci is not None:
-                if (
-                    len(provided_legal_moves_uci) != len(computed_legal_moves_uci)
-                    or set(provided_legal_moves_uci) != set(computed_legal_moves_uci)
-                ):
-                    raise ValueError(
-                        "legal_moves_uci가 python-chess 합법 수 집합과 일치하지 않는다: "
-                        f"{record['position_id']}"
-                    )
-            sample = PositionSample(
-                position_id=record["position_id"],
-                game_id=record.get("game_id"),
-                fen=fen,
-                history_fens=history_fens,
-                board_planes=encode_fen_history(history_fens, history_length=config.history_length),
-                legal_moves_uci=computed_legal_moves_uci,
-                board_state=board_state,
-                target_move_uci=record.get("target_move_uci"),
-                next_fen=record.get("next_fen"),
-                concept_tags=record["concept_tags"] if "concept_tags" in record else None,
-                engine_eval_cp=record.get("engine_eval_cp"),
-            )
-            repetition_count_present = "repetition_count" in record
-            if repetition_count_present:
-                sample.board_state.meta.repetition_count = int(record["repetition_count"])
-            validate_position_sample(
-                sample,
-                require_repetition_count=config.require_repetition_count,
-                repetition_count_present=repetition_count_present,
-            )
-            samples.append(sample)
-    samples = _split_by_game_id(samples, config)
+    for record in records:
+        fen = record["fen"]
+        history_fens = record.get("history_fens") or [fen]
+        board_state = fen_to_board_state(fen)
+        board = board_state_to_board(board_state)
+        computed_legal_moves_uci = [move.uci() for move in board.legal_moves]
+        provided_legal_moves_uci = record.get("legal_moves_uci")
+        if provided_legal_moves_uci is not None:
+            if (
+                len(provided_legal_moves_uci) != len(computed_legal_moves_uci)
+                or set(provided_legal_moves_uci) != set(computed_legal_moves_uci)
+            ):
+                raise ValueError(
+                    "legal_moves_uci가 python-chess 합법 수 집합과 일치하지 않는다: "
+                    f"{record['position_id']}"
+                )
+        sample = PositionSample(
+            position_id=record["position_id"],
+            game_id=record.get("game_id"),
+            fen=fen,
+            history_fens=history_fens,
+            board_planes=encode_fen_history(history_fens, history_length=config.history_length),
+            legal_moves_uci=computed_legal_moves_uci,
+            board_state=board_state,
+            target_move_uci=record.get("target_move_uci"),
+            next_fen=record.get("next_fen"),
+            concept_tags=record["concept_tags"] if "concept_tags" in record else None,
+            engine_eval_cp=record.get("engine_eval_cp"),
+        )
+        repetition_count_present = "repetition_count" in record
+        if repetition_count_present:
+            sample.board_state.meta.repetition_count = int(record["repetition_count"])
+        validate_position_sample(
+            sample,
+            require_repetition_count=config.require_repetition_count,
+            repetition_count_present=repetition_count_present,
+        )
+        samples.append(sample)
+    if split_field is None:
+        samples = _split_by_game_id(samples, config)
     if config.limit is not None:
         return samples[: config.limit]
     return samples

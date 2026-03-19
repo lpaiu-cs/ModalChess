@@ -25,9 +25,14 @@ ModalChess는 구조화된 공간 체스 표현을 다루는 CUDA 대응 연구 
 python -m pip install -e ".[dev]"
 pytest
 python -m modalchess.train.train_spatial_baseline --config configs/train/default.yaml
-python -m modalchess.eval.eval_baseline --config configs/eval/default.yaml --checkpoint outputs/train/model.pt
+python -m modalchess.eval.eval_baseline --config configs/eval/default.yaml --checkpoint outputs/train/best_model.pt
 python -m modalchess.train.train_spatial_baseline --config configs/train/fen_baseline.yaml
-python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml --checkpoint outputs/train_fen/model.pt
+python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml --checkpoint outputs/train_fen/best_model.pt
+python -m modalchess.train.train_spatial_baseline --config configs/train/pilot_spatial.yaml
+python -m modalchess.eval.eval_baseline --config configs/eval/pilot_spatial.yaml --checkpoint outputs/week1/exp0_spatial_smoke/seed11/best_model.pt
+python -m modalchess.train.train_spatial_baseline --config configs/train/pilot_fen.yaml
+python -m modalchess.eval.eval_baseline --config configs/eval/pilot_fen.yaml --checkpoint outputs/week1/exp0_fen_smoke/seed11/best_model.pt
+python -m modalchess.eval.aggregate_week1 --input-root outputs/week1
 ```
 
 ## 디렉터리 구성
@@ -46,6 +51,8 @@ python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml 
 
 JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하며, 데이터셋 빌더는 `game_id` 기준으로 `train/val/test` split을 수행합니다. `split != all`인데 `game_id`가 없으면 기본적으로 에러를 내고, 정말 position-level split이 필요할 때만 `allow_position_level_split: true`를 명시적으로 켜야 합니다.
 
+레코드에 `split` 필드가 모든 샘플에 일관되게 존재하면, 데이터셋 빌더는 ratio split 대신 그 값을 그대로 사용합니다. 1주차 파일럿 설정은 이 explicit split 경로를 사용합니다.
+
 `history_fens`를 제공하는 경우 마지막 항목은 반드시 현재 `fen`과 같아야 하며, 중간 전이도 합법적인 단일 수로 연결되는지 검증합니다. `legal_moves_uci`를 제공해도 학습에는 보드 기준으로 다시 계산한 합법 수를 사용하고, JSONL 값은 검증용으로만 다룹니다.
 
 `concept_tags`와 `engine_eval_cp`는 선택적 auxiliary 라벨입니다. 필드가 아예 없는 샘플은 `0-label`로 간주하지 않고, 해당 손실에서 마스킹되어 제외됩니다.
@@ -53,3 +60,12 @@ JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하
 spatial baseline과 FEN baseline은 모두 동일한 `meta_features` 스칼라 입력 경로를 가질 수 있으며, 기본 설정은 두 모델 모두 `context` pooled 표현을 헤드에 사용합니다. 필요하면 head별로 `board` 또는 `context` pooled 선택을 config에서 바꿔 ablation할 수 있습니다.
 
 기본 학습 엔트리포인트는 본 학습 체크포인트를 overfit 루프로 추가 오염시키지 않습니다. overfit은 테스트나 별도 실험에서만 직접 호출하도록 분리했습니다.
+
+## 1주차 파일럿 규칙
+
+- best checkpoint 선택 기준은 항상 `val target_move_nll` 최소입니다.
+- 학습은 `best_model.pt`, `last_model.pt`, `train_metrics.json`, `run_metadata.json`, config 사본을 남깁니다.
+- 평가는 `val/test` split별 `eval_report.*`, `eval_failures.jsonl`, 상위 `eval_summary.*`를 남깁니다.
+- `python -m modalchess.eval.aggregate_week1 --input-root outputs/week1`로 run별 표와 subset 표를 다시 만들 수 있습니다.
+
+`configs/train/pilot_*.yaml`과 `configs/eval/pilot_*.yaml`은 저장소 내부 `data/pilot/week1_fixture_pilot.jsonl`을 가리키는 smoke 설정입니다. 실제 파일럿 JSONL로 바꿔 쓸 때는 config를 수정하거나 CLI의 `--dataset-path`, `--train-dataset-path`, `--val-dataset-path`, `--output-dir`, `--seed` override를 사용할 수 있습니다.

@@ -33,3 +33,11 @@ def load_and_merge_yaml_configs(paths: list[str | Path]) -> dict[str, Any]:
     for path in paths:
         merged = deep_merge_dict(merged, load_yaml_config(path))
     return merged
+
+
+def write_yaml_config(path: str | Path, data: dict[str, Any]) -> None:
+    """설정 딕셔너리를 YAML 파일로 기록한다."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)

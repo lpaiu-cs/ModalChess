@@ -200,3 +200,45 @@ def test_jsonl_dataset_requires_target_move_when_next_fen_is_present(tmp_path: P
                 split="all",
             )
         )
+
+
+def test_jsonl_dataset_supports_explicit_split_field(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "explicit_split.jsonl"
+    records = [
+        {
+            "position_id": "train_1",
+            "game_id": "g1",
+            "split": "train",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "target_move_uci": "e2e4",
+        },
+        {
+            "position_id": "val_1",
+            "game_id": "g2",
+            "split": "val",
+            "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+            "target_move_uci": "a7a8q",
+        },
+        {
+            "position_id": "test_1",
+            "game_id": "g3",
+            "split": "test",
+            "fen": "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1",
+            "target_move_uci": "e1e2",
+        },
+    ]
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+
+    val_dataset = build_dataset(
+        DatasetBuildConfig(
+            source="jsonl",
+            dataset_path=str(dataset_path),
+            split="val",
+            split_field="split",
+        )
+    )
+
+    assert len(val_dataset.samples) == 1
+    assert val_dataset.samples[0].position_id == "val_1"
