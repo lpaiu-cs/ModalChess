@@ -78,6 +78,10 @@ def validate_position_sample(
     """샘플이 학습 전 만족해야 하는 일관성 규칙을 검증한다."""
     _assert_history_fens(sample.position_id, sample.fen, sample.history_fens)
     board = board_state_to_board(sample.board_state)
+    if sample.next_fen is not None and sample.target_move_uci is None:
+        raise ValueError(
+            f"next_fen을 제공하는 레코드는 target_move_uci도 함께 가져야 한다: {sample.position_id}"
+        )
     if sample.target_move_uci is not None:
         legal_moves = {move.uci() for move in board.legal_moves}
         if sample.target_move_uci not in legal_moves:

@@ -96,6 +96,7 @@
 - 문자 단위 FEN 토크나이저
 - Transformer 기반 시퀀스 인코더
 - FEN 시퀀스에서 64개 square query를 뽑아 동일한 action/state 출력 공간으로 투영
+- spatial 경로와 동일한 scalar `meta_features`를 별도 meta token으로 받아 공정성을 유지
 
 이 baseline은 spatial 모델과 동일한 policy/state/value/concept 평가 경로를 공유합니다.
 

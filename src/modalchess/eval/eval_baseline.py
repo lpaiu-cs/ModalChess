@@ -31,6 +31,8 @@ def run_evaluation(
     if dataset_config.source != "fixture" and dataset_config.split not in {"val", "test"}:
         raise ValueError("JSONL 평가에서는 split을 val 또는 test로 명시해야 한다.")
     dataset = build_dataset(dataset_config)
+    if len(dataset) == 0:
+        raise ValueError("평가 데이터셋이 비어 있다. split/ratio/dataset_path 설정을 확인해야 한다.")
     model_config = resolve_model_config(config)
     concept_vocab = model_config.get("concept_vocab", [])
     batch_size = int(config.get("metrics", {}).get("batch_size", min(len(dataset), 64)))

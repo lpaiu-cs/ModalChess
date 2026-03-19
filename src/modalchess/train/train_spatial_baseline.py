@@ -54,6 +54,12 @@ def build_model_from_config(model_config: dict[str, Any]) -> ModalChessCoreModel
             legality_hidden_dim=model_config.get("legality_hidden_dim", 64),
             concept_vocab=model_config.get("concept_vocab", []),
             use_pair_scorer=model_config.get("use_pair_scorer", False),
+            meta_num_tokens=model_config.get("meta_num_tokens", 2),
+            meta_hidden_dim=model_config.get("meta_hidden_dim"),
+            policy_pool=model_config.get("policy_pool", "context"),
+            state_probe_pool=model_config.get("state_probe_pool", "context"),
+            value_pool=model_config.get("value_pool", "context"),
+            concept_pool=model_config.get("concept_pool", "context"),
         )
     return ModalChessCoreModel(
         history_length=model_config["history_length"],
@@ -69,6 +75,10 @@ def build_model_from_config(model_config: dict[str, Any]) -> ModalChessCoreModel
         use_pair_scorer=model_config.get("use_pair_scorer", False),
         meta_num_tokens=model_config.get("meta_num_tokens", 2),
         meta_hidden_dim=model_config.get("meta_hidden_dim"),
+        policy_pool=model_config.get("policy_pool", "context"),
+        state_probe_pool=model_config.get("state_probe_pool", "context"),
+        value_pool=model_config.get("value_pool", "context"),
+        concept_pool=model_config.get("concept_pool", "context"),
     )
 
 

@@ -6,3 +6,9 @@ num_heads: 4
 dropout: 0.1
 legality_hidden_dim: 64
 use_pair_scorer: false
+meta_num_tokens: 2
+meta_hidden_dim: 128
+policy_pool: context
+state_probe_pool: context
+value_pool: context
+concept_pool: context

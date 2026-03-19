@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import torch
 from torch import nn
 
 from modalchess.models.board_encoder import BoardEncoder
@@ -31,9 +32,19 @@ class ModalChessCoreModel(nn.Module):
         use_pair_scorer: bool = False,
         meta_num_tokens: int = 2,
         meta_hidden_dim: int | None = None,
+        policy_pool: str = "context",
+        state_probe_pool: str = "context",
+        value_pool: str = "context",
+        concept_pool: str = "context",
     ) -> None:
         super().__init__()
         concept_vocab = concept_vocab or []
+        self.pool_selection = {
+            "policy": policy_pool,
+            "state_probe": state_probe_pool,
+            "value": value_pool,
+            "concept": concept_pool,
+        }
         self.meta_encoder = MetaEncoder(
             d_model=d_model,
             num_tokens=meta_num_tokens,
@@ -55,6 +66,17 @@ class ModalChessCoreModel(nn.Module):
         self.value_head = ValueHead(d_model=d_model)
         self.concept_head = ConceptHead(d_model=d_model, concept_vocab=concept_vocab)
 
+    @staticmethod
+    def _select_pooled(
+        encoded: dict[str, torch.Tensor],
+        selection: str,
+    ) -> torch.Tensor:
+        if selection == "board":
+            return encoded["board_pooled"]
+        if selection == "context":
+            return encoded["context_pooled"]
+        raise ValueError(f"지원하지 않는 pooled 선택: {selection}")
+
     def forward(
         self,
         board_planes=None,
@@ -70,12 +92,25 @@ class ModalChessCoreModel(nn.Module):
             extra_tokens = self.meta_encoder(meta_features)
         encoded = self.encoder(board_planes, extra_tokens=extra_tokens)
         tokens = encoded["tokens"]
-        context_pooled = encoded["context_pooled"]
         outputs = {}
         outputs.update(encoded)
-        outputs.update(self.policy_head(tokens=tokens, pooled=context_pooled))
-        outputs.update(self.state_probe_head(tokens=tokens, pooled=context_pooled))
+        outputs.update(
+            self.policy_head(
+                tokens=tokens,
+                pooled=self._select_pooled(encoded, self.pool_selection["policy"]),
+            )
+        )
+        outputs.update(
+            self.state_probe_head(
+                tokens=tokens,
+                pooled=self._select_pooled(encoded, self.pool_selection["state_probe"]),
+            )
+        )
         outputs.update(self.legality_head(tokens=tokens))
-        outputs.update(self.value_head(pooled=context_pooled))
-        outputs.update(self.concept_head(pooled=context_pooled))
+        outputs.update(
+            self.value_head(pooled=self._select_pooled(encoded, self.pool_selection["value"]))
+        )
+        outputs.update(
+            self.concept_head(pooled=self._select_pooled(encoded, self.pool_selection["concept"]))
+        )
         return outputs

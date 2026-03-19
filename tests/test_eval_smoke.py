@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from modalchess.eval.eval_baseline import run_evaluation
 from modalchess.train.train_spatial_baseline import run_training
 
@@ -70,3 +72,23 @@ def test_eval_smoke_run(tmp_path: Path) -> None:
     assert Path(metrics["report_json"]).exists()
     assert Path(metrics["report_csv"]).exists()
     assert Path(metrics["failure_dump_jsonl"]).exists()
+
+
+def test_eval_raises_on_empty_dataset() -> None:
+    with pytest.raises(ValueError, match="비어"):
+        run_evaluation(
+            {
+                "output_dir": "outputs/eval_empty",
+                "dataset": {"source": "fixture", "history_length": 1, "limit": 0},
+                "model": {
+                    "history_length": 1,
+                    "input_channels": 18,
+                    "d_model": 64,
+                    "num_layers": 1,
+                    "num_heads": 4,
+                    "concept_vocab": [],
+                },
+                "metrics": {"topk": [1]},
+            },
+            checkpoint_path="unused.pt",
+        )

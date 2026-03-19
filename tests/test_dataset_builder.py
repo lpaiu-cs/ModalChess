@@ -175,3 +175,28 @@ def test_jsonl_dataset_validates_provided_legal_moves(tmp_path: Path) -> None:
                 split="all",
             )
         )
+
+
+def test_jsonl_dataset_requires_target_move_when_next_fen_is_present(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "dangling_next_fen.jsonl"
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "position_id": "dangling_next",
+                    "game_id": "g1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "next_fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(ValueError, match="next_fen"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="all",
+            )
+        )

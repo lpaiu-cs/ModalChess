@@ -50,4 +50,6 @@ JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하
 
 `concept_tags`와 `engine_eval_cp`는 선택적 auxiliary 라벨입니다. 필드가 아예 없는 샘플은 `0-label`로 간주하지 않고, 해당 손실에서 마스킹되어 제외됩니다.
 
+spatial baseline과 FEN baseline은 모두 동일한 `meta_features` 스칼라 입력 경로를 가질 수 있으며, 기본 설정은 두 모델 모두 `context` pooled 표현을 헤드에 사용합니다. 필요하면 head별로 `board` 또는 `context` pooled 선택을 config에서 바꿔 ablation할 수 있습니다.
+
 기본 학습 엔트리포인트는 본 학습 체크포인트를 overfit 루프로 추가 오염시키지 않습니다. overfit은 테스트나 별도 실험에서만 직접 호출하도록 분리했습니다.

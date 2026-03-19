@@ -90,6 +90,8 @@ state probe는 현재 상태에 대한 타깃만 복원합니다.
 - 마지막 항목 `history_fens[-1]`이 현재 `fen`과 같아야 함
 - 인접한 두 항목은 합법적인 단일 수 전이여야 함
 
+`next_fen`을 제공하는 레코드는 반드시 `target_move_uci`도 함께 제공해야 합니다. 현재 단계에서 next-state 정합성은 "현재 상태 + target move -> next_fen" 계약으로만 검증합니다.
+
 `legal_moves_uci`를 제공할 수는 있지만, 빌더는 이를 `python-chess` 기준 합법 수 집합과 대조 검증한 뒤 내부적으로는 재계산된 합법 수를 사용합니다.
 
 학습/평가 split은 position이 아니라 `game_id` 기준으로 수행합니다. `split != all`인데 `game_id`가 없는 레코드가 섞여 있으면 기본적으로 에러를 발생시키며, 위험한 position-level split은 `allow_position_level_split: true`일 때만 허용합니다.

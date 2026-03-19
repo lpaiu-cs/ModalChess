@@ -10,6 +10,7 @@ from modalchess.models.heads.legality import LegalityHead
 from modalchess.models.heads.policy_factorized import PolicyFactorizedHead
 from modalchess.models.heads.state_probe import StateProbeHead
 from modalchess.models.heads.value import ValueHead
+from modalchess.models.meta_encoder import MetaEncoder
 
 
 class FenPolicyBaselineModel(nn.Module):
@@ -26,10 +27,22 @@ class FenPolicyBaselineModel(nn.Module):
         legality_hidden_dim: int = 64,
         concept_vocab: list[str] | None = None,
         use_pair_scorer: bool = False,
+        meta_num_tokens: int = 2,
+        meta_hidden_dim: int | None = None,
+        policy_pool: str = "context",
+        state_probe_pool: str = "context",
+        value_pool: str = "context",
+        concept_pool: str = "context",
     ) -> None:
         super().__init__()
         concept_vocab = concept_vocab or []
         self.max_length = max_length
+        self.pool_selection = {
+            "policy": policy_pool,
+            "state_probe": state_probe_pool,
+            "value": value_pool,
+            "concept": concept_pool,
+        }
         self.token_embed = nn.Embedding(vocab_size, d_model)
         self.pos_embed = nn.Embedding(max_length, d_model)
         encoder_layer = nn.TransformerEncoderLayer(
@@ -52,6 +65,11 @@ class FenPolicyBaselineModel(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
+        self.meta_encoder = MetaEncoder(
+            d_model=d_model,
+            num_tokens=meta_num_tokens,
+            hidden_dim=meta_hidden_dim,
+        )
         self.query_norm = nn.LayerNorm(d_model)
         self.output_norm = nn.LayerNorm(d_model)
         self.policy_head = PolicyFactorizedHead(d_model=d_model, use_pair_scorer=use_pair_scorer)
@@ -59,6 +77,14 @@ class FenPolicyBaselineModel(nn.Module):
         self.legality_head = LegalityHead(d_model=d_model, hidden_dim=legality_hidden_dim)
         self.value_head = ValueHead(d_model=d_model)
         self.concept_head = ConceptHead(d_model=d_model, concept_vocab=concept_vocab)
+
+    @staticmethod
+    def _select_pooled(outputs: dict[str, torch.Tensor], selection: str) -> torch.Tensor:
+        if selection == "board":
+            return outputs["board_pooled"]
+        if selection == "context":
+            return outputs["context_pooled"]
+        raise ValueError(f"지원하지 않는 pooled 선택: {selection}")
 
     def forward(
         self,
@@ -90,18 +116,39 @@ class FenPolicyBaselineModel(nn.Module):
         )
         square_tokens = self.output_norm(square_tokens + square_queries)
         board_pooled = square_tokens.mean(dim=1)
-        context_pooled = 0.5 * (sequence_pooled + board_pooled)
+        sequence_token = sequence_pooled.unsqueeze(1)
+        meta_tokens = (
+            self.meta_encoder(meta_features)
+            if meta_features is not None
+            else square_tokens.new_zeros(batch_size, 0, square_tokens.size(-1))
+        )
+        context_tokens = torch.cat([square_tokens, sequence_token, meta_tokens], dim=1)
+        context_pooled = context_tokens.mean(dim=1)
         outputs = {
             "tokens": square_tokens,
-            "meta_tokens": square_tokens.new_zeros(batch_size, 0, square_tokens.size(-1)),
-            "context_tokens": square_tokens,
+            "meta_tokens": meta_tokens,
+            "context_tokens": context_tokens,
             "board_pooled": board_pooled,
             "context_pooled": context_pooled,
             "pooled": context_pooled,
         }
-        outputs.update(self.policy_head(tokens=square_tokens, pooled=context_pooled))
-        outputs.update(self.state_probe_head(tokens=square_tokens, pooled=context_pooled))
+        outputs.update(
+            self.policy_head(
+                tokens=square_tokens,
+                pooled=self._select_pooled(outputs, self.pool_selection["policy"]),
+            )
+        )
+        outputs.update(
+            self.state_probe_head(
+                tokens=square_tokens,
+                pooled=self._select_pooled(outputs, self.pool_selection["state_probe"]),
+            )
+        )
         outputs.update(self.legality_head(tokens=square_tokens))
-        outputs.update(self.value_head(pooled=context_pooled))
-        outputs.update(self.concept_head(pooled=context_pooled))
+        outputs.update(
+            self.value_head(pooled=self._select_pooled(outputs, self.pool_selection["value"]))
+        )
+        outputs.update(
+            self.concept_head(pooled=self._select_pooled(outputs, self.pool_selection["concept"]))
+        )
         return outputs
