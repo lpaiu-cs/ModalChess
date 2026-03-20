@@ -6,3 +6,4 @@ outputs/
 *.egg-info/
 data/pilot/raw/
 data/pilot/real_v1/
+data/pilot/language_v1/
