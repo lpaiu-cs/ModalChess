@@ -59,6 +59,8 @@ def test_eval_smoke_run(tmp_path: Path) -> None:
         },
     }
     training_metrics = run_training(train_config)
+    assert training_metrics["model_parameter_count"] > 0
+    assert training_metrics["trainable_parameter_count"] > 0
     eval_config = {
         "output_dir": str(eval_output),
         "dataset": {"source": "fixture", "history_length": 1, "limit": 2},
@@ -69,6 +71,7 @@ def test_eval_smoke_run(tmp_path: Path) -> None:
     assert "square_state_accuracy" in metrics
     assert "top_1_move_accuracy" in metrics
     assert "target_move_nll" in metrics
+    assert metrics["model_parameter_count"] == training_metrics["model_parameter_count"]
     assert Path(metrics["report_json"]).exists()
     assert Path(metrics["report_csv"]).exists()
     assert Path(metrics["failure_dump_jsonl"]).exists()

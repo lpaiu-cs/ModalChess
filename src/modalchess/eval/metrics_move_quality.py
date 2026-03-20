@@ -11,6 +11,44 @@ from modalchess.data.move_codec import uci_to_factorized
 from modalchess.models.heads.policy_factorized import score_factorized_moves
 
 
+BASE_SUBSET_FLAGS = {
+    "promotion": "is_promotion",
+    "castling": "is_castling",
+    "en_passant": "is_en_passant",
+    "check_evasion": "is_check_evasion",
+}
+
+THEME_SUBSET_FLAGS = (
+    "theme_promotion_related",
+    "theme_check_related",
+    "theme_castling_related",
+    "theme_en_passant_related",
+)
+
+
+def _normalize_theme_tag(tag: str) -> str:
+    return "".join(character for character in tag.lower() if character.isalnum())
+
+
+def _theme_group_flags(concept_tags: Sequence[str] | None) -> dict[str, bool]:
+    normalized = {_normalize_theme_tag(tag) for tag in concept_tags or []}
+    return {
+        "theme_promotion_related": any(
+            "promotion" in tag or "underpromotion" in tag or "promote" in tag
+            for tag in normalized
+        ),
+        "theme_check_related": any(
+            "check" in tag or "mate" in tag or "evasion" in tag
+            for tag in normalized
+        ),
+        "theme_castling_related": any(
+            "castle" in tag or "castling" in tag
+            for tag in normalized
+        ),
+        "theme_en_passant_related": any("enpassant" in tag for tag in normalized),
+    }
+
+
 def _prediction_matches_target(
     prediction: dict[str, object],
     target: dict[str, int],
@@ -67,6 +105,7 @@ def collect_move_prediction_rows(
             "dst_square": target_tuple[1],
             "promotion": target_tuple[2],
         }
+        theme_flags = _theme_group_flags(batch.get("concept_tags", [])[index])
         topk_hits = {
             f"is_correct_top_{k}": any(
                 _prediction_matches_target(prediction, target_payload)
@@ -96,7 +135,9 @@ def collect_move_prediction_rows(
                 "is_castling": bool(batch["target_is_castling"][index].item()),
                 "is_en_passant": bool(batch["target_is_en_passant"][index].item()),
                 "is_check_evasion": bool(batch["subset_check_evasion"][index].item()),
+                "concept_tags": list(batch.get("concept_tags", [])[index]),
                 **topk_hits,
+                **theme_flags,
             }
         )
     return rows
@@ -108,11 +149,16 @@ def summarize_move_prediction_rows(
 ) -> dict[str, object]:
     """샘플별 예측 행으로부터 최종 move-quality 지표를 계산한다."""
     correct = {k: 0 for k in topk}
+    subset_flag_names = dict(BASE_SUBSET_FLAGS)
+    subset_flag_names.update(
+        {
+            subset_name: subset_name
+            for subset_name in THEME_SUBSET_FLAGS
+        }
+    )
     subset_correct = {
-        "promotion": {k: 0 for k in topk},
-        "castling": {k: 0 for k in topk},
-        "en_passant": {k: 0 for k in topk},
-        "check_evasion": {k: 0 for k in topk},
+        subset_name: {k: 0 for k in topk}
+        for subset_name in subset_flag_names
     }
     subset_total = {name: 0 for name in subset_correct}
     subset_nll = {name: 0.0 for name in subset_correct}
@@ -123,8 +169,7 @@ def summarize_move_prediction_rows(
         for k in topk:
             if any(_prediction_matches_target(prediction, target) for prediction in row["top_predictions"][:k]):
                 correct[k] += 1
-        for subset_name in subset_total:
-            flag_name = f"is_{subset_name}"
+        for subset_name, flag_name in subset_flag_names.items():
             if row[flag_name]:
                 subset_total[subset_name] += 1
                 subset_nll[subset_name] += float(row["target_move_nll"])

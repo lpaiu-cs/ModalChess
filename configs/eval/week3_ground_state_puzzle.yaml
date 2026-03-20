@@ -1,0 +1,15 @@
+output_dir: outputs/week3/puzzle_aux_eval/exp3_ground_state/seed11
+model_config_paths:
+  - configs/model/board_encoder.yaml
+  - configs/model/heads.yaml
+datasets:
+  puzzle:
+    source: jsonl
+    dataset_path: data/pilot/real_v1/puzzle_eval.jsonl
+    split: all
+    history_length: 1
+model:
+  use_pair_scorer: true
+metrics:
+  topk: [1, 3, 5]
+  batch_size: 256

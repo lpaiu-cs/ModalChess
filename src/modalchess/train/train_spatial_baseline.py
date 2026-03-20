@@ -83,7 +83,17 @@ def build_model_from_config(model_config: dict[str, Any]) -> ModalChessCoreModel
         state_probe_pool=model_config.get("state_probe_pool", "context"),
         value_pool=model_config.get("value_pool", "context"),
         concept_pool=model_config.get("concept_pool", "context"),
-    )
+        )
+
+
+def count_model_parameters(model: torch.nn.Module) -> dict[str, int]:
+    """모델의 전체/학습가능 파라미터 수를 계산한다."""
+    return {
+        "model_parameter_count": int(sum(parameter.numel() for parameter in model.parameters())),
+        "trainable_parameter_count": int(
+            sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        ),
+    }
 
 
 def _build_train_dataloader(
@@ -188,6 +198,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         )
 
     model = build_model_from_config(model_config)
+    parameter_counts = count_model_parameters(model)
     optimizer = build_optimizer(
         model=model,
         learning_rate=float(config["train"]["learning_rate"]),
@@ -303,6 +314,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "git_hash": git_hash,
         "model_type": model_type,
         "selection_metric": selection_metric,
+        **parameter_counts,
     }
     (output_dir / "train_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     run_metadata = {
@@ -310,6 +322,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "git_hash": git_hash,
         "model_type": model_type,
         "selection_metric": selection_metric,
+        **parameter_counts,
         "best_checkpoint_path": str(best_checkpoint_path),
         "last_checkpoint_path": str(last_checkpoint_path),
         "train_config_path": str(output_dir / "train_config.yaml"),

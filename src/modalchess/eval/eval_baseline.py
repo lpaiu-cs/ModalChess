@@ -15,7 +15,11 @@ from modalchess.eval.pipeline import (
     resolve_named_eval_dataset_configs,
 )
 from modalchess.eval.report import write_failure_dump, write_report
-from modalchess.train.train_spatial_baseline import build_model_from_config, resolve_model_config
+from modalchess.train.train_spatial_baseline import (
+    build_model_from_config,
+    count_model_parameters,
+    resolve_model_config,
+)
 from modalchess.utils.config import deep_merge_dict, load_yaml_config, write_yaml_config
 from modalchess.utils.device import resolve_device
 
@@ -40,12 +44,14 @@ def _build_summary_payload(
     checkpoint_path: str,
     checkpoint: dict[str, Any],
     model_type: str,
+    parameter_counts: dict[str, int],
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "checkpoint_path": checkpoint_path,
         "seed": checkpoint.get("seed"),
         "git_hash": checkpoint.get("git_hash", "unknown"),
         "model_type": model_type,
+        **parameter_counts,
         "splits": split_results,
     }
     for split_name, metrics in split_results.items():
@@ -103,6 +109,7 @@ def run_evaluation(
     model = build_model_from_config(model_config).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
+    parameter_counts = count_model_parameters(model)
 
     write_yaml_config(output_dir / "eval_config.yaml", config)
     write_yaml_config(output_dir / "resolved_model_config.yaml", model_config)
@@ -144,6 +151,7 @@ def run_evaluation(
         checkpoint_path=checkpoint_path,
         checkpoint=checkpoint,
         model_type=model_type,
+        parameter_counts=parameter_counts,
     )
     summary_paths = write_report(summary, output_dir=output_dir, name="eval_summary")
     summary["summary_json"] = summary_paths["json"]
@@ -155,6 +163,7 @@ def run_evaluation(
                 "seed": checkpoint.get("seed"),
                 "git_hash": checkpoint.get("git_hash", "unknown"),
                 "model_type": model_type,
+                **parameter_counts,
                 "eval_config_path": str(output_dir / "eval_config.yaml"),
                 "resolved_model_config_path": str(output_dir / "resolved_model_config.yaml"),
             },

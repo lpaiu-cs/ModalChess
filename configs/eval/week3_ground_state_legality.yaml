@@ -1,0 +1,20 @@
+output_dir: outputs/week3/exp3_ground_state_legality/seed11/eval_main
+model_config_paths:
+  - configs/model/board_encoder.yaml
+  - configs/model/heads.yaml
+datasets:
+  val:
+    source: jsonl
+    dataset_path: data/pilot/real_v1/supervised_val.jsonl
+    split: all
+    history_length: 1
+  test:
+    source: jsonl
+    dataset_path: data/pilot/real_v1/supervised_test.jsonl
+    split: all
+    history_length: 1
+model:
+  use_pair_scorer: true
+metrics:
+  topk: [1, 3, 5]
+  batch_size: 256

@@ -119,7 +119,9 @@ def collate_position_samples(
 
     return {
         "position_ids": [sample.position_id for sample in samples],
+        "game_ids": [sample.game_id for sample in samples],
         "fens": [sample.fen for sample in samples],
+        "concept_tags": [list(sample.concept_tags or []) for sample in samples],
         "board_planes": board_planes,
         "meta_features": torch.stack(meta_features, dim=0),
         "fen_token_ids": fen_token_ids,
