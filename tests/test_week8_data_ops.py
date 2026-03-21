@@ -157,7 +157,7 @@ def test_probe_corpora_source_row_fallback_manifest(tmp_path: Path) -> None:
     )
     strategy = result["split_strategy_by_source"]["mate"]
     assert strategy["split_key_type"] == "source_row_id"
-    assert strategy["fallback_reason"] == "no_repeated_game_id_groups"
+    assert strategy["fallback_reason"] == "no_repeated_game_id_groups_meeting_threshold"
 
 
 def test_aux_fetch_build_target_realism_and_aux_retrieval(tmp_path: Path) -> None:

@@ -83,7 +83,7 @@ def _resolve_split_strategy(
             max_group_size=max_group_size,
             candidate_game_id_rows=candidate_game_id_rows,
         )
-    fallback_reason = "no_repeated_game_id_groups"
+    fallback_reason = "no_repeated_game_id_groups_meeting_threshold"
     if not config.prefer_game_id_group_split:
         fallback_reason = "prefer_game_id_group_split_disabled"
     if candidate_game_id_rows == 0:

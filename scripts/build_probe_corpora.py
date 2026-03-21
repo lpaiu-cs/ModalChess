@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    report_output_dir = args.report_output_dir or str(Path(args.output_root) / "reports")
     result = build_probe_corpora(
         mate_path=args.mate_path,
         puzzle_path=args.puzzle_path,
@@ -52,12 +53,11 @@ def main() -> None:
             min_game_id_group_size=args.min_game_id_group_size,
         ),
     )
-    if args.report_output_dir:
-        write_probe_reports(
-            input_root=args.output_root,
-            output_dir=args.report_output_dir,
-            compare_root=args.compare_root,
-        )
+    write_probe_reports(
+        input_root=args.output_root,
+        output_dir=report_output_dir,
+        compare_root=args.compare_root,
+    )
     print(f"Wrote probe manifest to {result['manifest_path']}")
 
 

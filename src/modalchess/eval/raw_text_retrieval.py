@@ -85,6 +85,10 @@ def _aux_text_document(row: dict[str, Any]) -> str:
     )
 
 
+def _annotated_comment_document(row: dict[str, Any]) -> str:
+    return str(row.get("comment_text") or "").strip()
+
+
 def _puzzle_synthetic_document(corpus_row: dict[str, Any], target_row: dict[str, Any]) -> str:
     tags = [_normalize_tag_text(tag) for tag in corpus_row.get("theme_tags") or target_row.get("target_labels") or []]
     flag_tokens = []
@@ -327,14 +331,17 @@ def _aggregate_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return aggregate_rows
 
 
-def _summary_markdown(aggregate_rows: list[dict[str, Any]]) -> str:
+def _summary_markdown(aggregate_rows: list[dict[str, Any]], output_prefix: str) -> str:
     lines = ["# Raw-Text Retrieval Summary", ""]
     lines.append("- MATE uses real strategy/tactic text retrieval.")
     lines.append("- Puzzle uses synthetic tag-string retrieval from themes and special-rule flags.")
     lines.append("- Auxiliary board-anchored corpora, when present, use raw text from external text-bearing sources.")
+    lines.append("- Annotated sidecar retrieval uses real move-conditioned PGN comment_text.")
     lines.append("- These are evaluation-only retrieval probes, not language-fusion results.")
     lines.append("")
-    for family in ("mate", "puzzle", "aux_board_anchored"):
+    if output_prefix == "comment_retrieval":
+        lines[0] = "# Comment Retrieval Summary"
+    for family in ("mate", "puzzle", "aux_board_anchored", "annotated_sidecar"):
         family_rows = [row for row in aggregate_rows if row["family"] == family]
         if not family_rows:
             continue
@@ -381,6 +388,8 @@ def _documents_for_family(
         return [_mate_text_document(row) for row in corpus_rows]
     if family == "aux_board_anchored":
         return [_aux_text_document(row) for row in corpus_rows]
+    if family == "annotated_sidecar":
+        return [_annotated_comment_document(row) for row in corpus_rows]
     if target_rows is None:
         raise ValueError("puzzle retrieval에는 target rows가 필요하다.")
     return [
@@ -399,6 +408,7 @@ def run_raw_text_retrieval_probes(
     puzzle_min_df: int = 25,
     max_vocab_size: int = 256,
     families: list[str] | None = None,
+    output_prefix: str = "raw_text_retrieval",
 ) -> dict[str, Any]:
     """Run raw-text/synthetic-tag retrieval probes on frozen embeddings."""
     seed_list = backbone_seeds or [11, 17, 23]
@@ -411,6 +421,7 @@ def run_raw_text_retrieval_probes(
         "mate": {"min_df": mate_min_df, "text_side_kind": "raw_text"},
         "puzzle": {"min_df": puzzle_min_df, "text_side_kind": "synthetic_tag_string"},
         "aux_board_anchored": {"min_df": mate_min_df, "text_side_kind": "raw_text"},
+        "annotated_sidecar": {"min_df": mate_min_df, "text_side_kind": "raw_move_comment_text"},
     }
     active_families = families or ["mate", "puzzle"]
     results: list[dict[str, Any]] = []
@@ -520,12 +531,12 @@ def run_raw_text_retrieval_probes(
                         )
 
     aggregate_rows = _aggregate_results(results)
-    json_path = output_root / "raw_text_retrieval_results.json"
-    csv_path = output_root / "raw_text_retrieval_results.csv"
-    summary_path = output_root / "raw_text_retrieval_summary.md"
+    json_path = output_root / f"{output_prefix}_results.json"
+    csv_path = output_root / f"{output_prefix}_results.csv"
+    summary_path = output_root / f"{output_prefix}_summary.md"
     json_path.write_text(json.dumps({"results": results, "aggregate": aggregate_rows}, indent=2), encoding="utf-8")
     _write_csv(csv_path, results)
-    summary_path.write_text(_summary_markdown(aggregate_rows), encoding="utf-8")
+    summary_path.write_text(_summary_markdown(aggregate_rows, output_prefix), encoding="utf-8")
     return {
         "json_path": str(json_path),
         "csv_path": str(csv_path),

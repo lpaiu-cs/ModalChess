@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -29,6 +29,18 @@ def _load_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     return payload
+
+
+def _same_effective_split_strategy(previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    if previous.get("split_key_type") != current.get("split_key_type"):
+        return False
+    strategy_fields = (
+        "split_key_type",
+        "repeated_group_count",
+        "max_group_size",
+        "candidate_game_id_rows",
+    )
+    return all(previous.get(field_name) == current.get(field_name) for field_name in strategy_fields)
 
 
 def _markdown_from_probe_report(report: dict[str, Any]) -> str:
@@ -129,10 +141,25 @@ def compare_probe_split_roots(
     current_manifest = _load_manifest(current_root_path / "manifests" / "probe_manifest.yaml")
     previous_strategy = previous_manifest.get("split_strategy_by_source", {})
     current_strategy = current_manifest.get("split_strategy_by_source", {})
-    if total_rows_with_split_change > 0 and previous_strategy == current_strategy:
+    source_names = sorted(set(previous_strategy) | set(current_strategy))
+    same_effective_strategy = all(
+        _same_effective_split_strategy(previous_strategy.get(source_name, {}), current_strategy.get(source_name, {}))
+        for source_name in source_names
+    )
+    all_source_row_fallback = all(
+        previous_strategy.get(source_name, {}).get("split_key_type") == "source_row_id"
+        and current_strategy.get(source_name, {}).get("split_key_type") == "source_row_id"
+        for source_name in source_names
+    ) if source_names else False
+    if total_rows_with_split_change > 0 and same_effective_strategy and all_source_row_fallback:
         note = (
             "Split assignments changed for some rows because the hash salt/build root changed, "
             "even though both versions still fell back to source_row_id."
+        )
+    elif total_rows_with_split_change > 0 and same_effective_strategy:
+        note = (
+            "Split assignments changed for some rows because the hash salt/build root changed, "
+            "even though the effective split-key strategy stayed the same."
         )
     elif total_rows_with_split_change > 0:
         note = "Split assignments changed for some rows after switching to a different split-key strategy."
