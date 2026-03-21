@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", action="append", default=[], help="name=path form; repeatable")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--include-square-tokens", action="store_true")
+    parser.add_argument("--format", choices=("jsonl", "pt"), default="jsonl")
     return parser.parse_args()
 
 
@@ -44,6 +45,7 @@ def main() -> None:
         config=EmbeddingExportConfig(
             batch_size=args.batch_size,
             include_square_tokens=args.include_square_tokens,
+            output_format=args.format,
         ),
     )
     print(f"Wrote embedding manifest to {result['manifest_path']}")

@@ -22,6 +22,7 @@ class EmbeddingExportConfig:
 
     batch_size: int = 64
     include_square_tokens: bool = False
+    output_format: str = "jsonl"
 
 
 def _load_checkpoint(path: str | Path, device: torch.device) -> dict[str, Any]:
@@ -64,6 +65,9 @@ def export_embeddings_for_checkpoint(
     model.eval()
     parameter_counts = count_model_parameters(model)
 
+    if export_config.output_format not in {"jsonl", "pt"}:
+        raise ValueError(f"지원하지 않는 embedding export format: {export_config.output_format}")
+
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
@@ -81,6 +85,15 @@ def export_embeddings_for_checkpoint(
         for dataset_name, dataset_path in dataset_paths.items():
             rows = _rows_from_path(dataset_path)
             output_rows: list[dict[str, Any]] = []
+            probe_ids: list[str | None] = []
+            position_ids: list[str | None] = []
+            sources: list[str | None] = []
+            splits: list[str | None] = []
+            fens: list[str | None] = []
+            target_moves: list[str | None] = []
+            board_chunks: list[torch.Tensor] = []
+            context_chunks: list[torch.Tensor] = []
+            square_chunks: list[torch.Tensor] = []
             for start in range(0, len(rows), export_config.batch_size):
                 batch_rows = rows[start : start + export_config.batch_size]
                 if not batch_rows:
@@ -103,33 +116,70 @@ def export_embeddings_for_checkpoint(
                 board_pooled = outputs["board_pooled"].detach().cpu()
                 context_pooled = outputs["context_pooled"].detach().cpu()
                 square_tokens = outputs["tokens"].detach().cpu() if export_config.include_square_tokens else None
-                for index, row in enumerate(batch_rows):
-                    payload = {
-                        "position_id": row.get("matched_position_id") or row.get("position_id"),
-                        "split": row.get("split"),
-                        "source": row.get("source"),
-                        "target_move_uci": row.get("target_move_uci") or row.get("matched_target_move_uci"),
-                        "board_pooled": board_pooled[index].tolist(),
-                        "context_pooled": context_pooled[index].tolist(),
-                        "checkpoint_path": str(checkpoint_path),
-                        "seed": checkpoint.get("seed"),
-                        "git_hash": checkpoint.get("git_hash", "unknown"),
-                        "model_parameter_count": parameter_counts["model_parameter_count"],
-                        "sidecar_id": row.get("sidecar_id"),
-                        "alignment_type": row.get("alignment_type"),
-                    }
+                if export_config.output_format == "jsonl":
+                    for index, row in enumerate(batch_rows):
+                        payload = {
+                            "probe_id": row.get("probe_id"),
+                            "position_id": row.get("matched_position_id") or row.get("position_id"),
+                            "split": row.get("split"),
+                            "source": row.get("source"),
+                            "fen": row.get("fen"),
+                            "target_move_uci": row.get("target_move_uci") or row.get("matched_target_move_uci"),
+                            "board_pooled": board_pooled[index].tolist(),
+                            "context_pooled": context_pooled[index].tolist(),
+                            "checkpoint_path": str(checkpoint_path),
+                            "seed": checkpoint.get("seed"),
+                            "git_hash": checkpoint.get("git_hash", "unknown"),
+                            "model_parameter_count": parameter_counts["model_parameter_count"],
+                            "sidecar_id": row.get("sidecar_id"),
+                            "alignment_type": row.get("alignment_type"),
+                        }
+                        if square_tokens is not None:
+                            payload["square_tokens"] = square_tokens[index].tolist()
+                        output_rows.append(payload)
+                else:
+                    probe_ids.extend(row.get("probe_id") for row in batch_rows)
+                    position_ids.extend((row.get("matched_position_id") or row.get("position_id")) for row in batch_rows)
+                    splits.extend(row.get("split") for row in batch_rows)
+                    sources.extend(row.get("source") for row in batch_rows)
+                    fens.extend(row.get("fen") for row in batch_rows)
+                    target_moves.extend((row.get("target_move_uci") or row.get("matched_target_move_uci")) for row in batch_rows)
+                    board_chunks.append(board_pooled)
+                    context_chunks.append(context_pooled)
                     if square_tokens is not None:
-                        payload["square_tokens"] = square_tokens[index].tolist()
-                    output_rows.append(payload)
+                        square_chunks.append(square_tokens)
 
-            output_path = destination / f"{dataset_name}_embeddings.jsonl"
-            with output_path.open("w", encoding="utf-8") as handle:
-                for row in output_rows:
-                    handle.write(json.dumps(row) + "\n")
+            suffix = ".jsonl" if export_config.output_format == "jsonl" else ".pt"
+            output_path = destination / f"{dataset_name}_embeddings{suffix}"
+            if export_config.output_format == "jsonl":
+                with output_path.open("w", encoding="utf-8") as handle:
+                    for row in output_rows:
+                        handle.write(json.dumps(row) + "\n")
+            else:
+                tensor_payload = {
+                    "probe_id": probe_ids,
+                    "position_id": position_ids,
+                    "source": sources,
+                    "split": splits,
+                    "fen": fens,
+                    "target_move_uci": target_moves,
+                    "board_pooled": torch.cat(board_chunks, dim=0) if board_chunks else torch.empty((0, 0)),
+                    "context_pooled": torch.cat(context_chunks, dim=0) if context_chunks else torch.empty((0, 0)),
+                    "checkpoint_path": str(checkpoint_path),
+                    "seed": checkpoint.get("seed"),
+                    "git_hash": checkpoint.get("git_hash", "unknown"),
+                    "model_parameter_count": parameter_counts["model_parameter_count"],
+                }
+                if export_config.include_square_tokens:
+                    tensor_payload["square_tokens"] = (
+                        torch.cat(square_chunks, dim=0) if square_chunks else torch.empty((0, 0, 0))
+                    )
+                torch.save(tensor_payload, output_path)
             manifest["datasets"][dataset_name] = {
                 "input_path": str(dataset_path),
                 "output_path": str(output_path),
-                "row_count": len(output_rows),
+                "row_count": len(rows),
+                "output_format": export_config.output_format,
             }
 
     manifest_path = destination / "embedding_manifest.yaml"
