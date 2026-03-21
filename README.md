@@ -177,3 +177,30 @@ python scripts/run_retrieval_readiness_probes.py --embedding-root outputs/week6/
 - split hygiene v2 report는 `data/pilot/language_probe_v2/reports/v1_vs_v2_split_diff.json`에 남깁니다.
 - readiness aggregate는 `outputs/week6/readiness_probes/probe_results_aggregate.csv`에 남깁니다.
 - retrieval probe는 `outputs/week6/retrieval_probes/*`에 저장되며, 반드시 retrieval-style readiness로만 해석합니다.
+
+## 7주차 text-realism / source-audit / raw-text retrieval
+
+7주차는 connector training 없이, week-6 probe가 실제 텍스트를 얼마나 다루고 있었는지 감사하고 raw-text retrieval을 추가합니다.
+
+- week-6 reference lock: `outputs/week7/reference_from_week6/`
+- text realism audit: `scripts/audit_probe_text_realism.py`
+- auxiliary source audit/build: `scripts/audit_aux_language_sources.py`, `scripts/build_aux_language_corpora.py`
+- MATE keyword densification audit: `scripts/audit_mate_keyword_coverage.py`
+- raw-text retrieval probe: `scripts/run_raw_text_retrieval_probes.py`
+
+실행 순서는 보통 다음과 같습니다.
+
+```bash
+python scripts/audit_probe_text_realism.py --input-root data/pilot/language_probe_v2 --week6-readiness-path outputs/week6/readiness_probes/probe_results.json --week6-retrieval-path outputs/week6/retrieval_probes/retrieval_results.json
+python scripts/audit_aux_language_sources.py --output-dir data/pilot/language_probe_v3/reports
+python scripts/build_aux_language_corpora.py --output-root data/pilot/language_probe_v3
+python scripts/audit_mate_keyword_coverage.py --input-path data/pilot/real_v1/language_mate.jsonl --output-dir data/pilot/language_probe_v3/reports
+python scripts/run_raw_text_retrieval_probes.py --embedding-root outputs/week6/embedding_exports --corpus-root data/pilot/language_probe_v2 --output-dir outputs/week7/raw_text_retrieval --backbone-seed 11 --backbone-seed 17 --backbone-seed 23
+```
+
+주의점은 다음과 같습니다.
+
+- MATE retrieval은 실제 `strategy_text + tactic_text`를 사용합니다.
+- puzzle retrieval은 natural text가 아니라 synthetic tag-string retrieval입니다.
+- 둘은 같은 종류의 언어 평가가 아니므로 summary에서 분리해서 해석해야 합니다.
+- week-7도 여전히 eval-only week입니다. connector training, LLM fusion, rationale training은 하지 않습니다.
