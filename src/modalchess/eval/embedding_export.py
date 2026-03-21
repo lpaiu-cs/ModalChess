@@ -118,8 +118,9 @@ def export_embeddings_for_checkpoint(
                 square_tokens = outputs["tokens"].detach().cpu() if export_config.include_square_tokens else None
                 if export_config.output_format == "jsonl":
                     for index, row in enumerate(batch_rows):
+                        probe_id = row.get("probe_id") or row.get("aux_id")
                         payload = {
-                            "probe_id": row.get("probe_id"),
+                            "probe_id": probe_id,
                             "position_id": row.get("matched_position_id") or row.get("position_id"),
                             "split": row.get("split"),
                             "source": row.get("source"),
@@ -138,7 +139,7 @@ def export_embeddings_for_checkpoint(
                             payload["square_tokens"] = square_tokens[index].tolist()
                         output_rows.append(payload)
                 else:
-                    probe_ids.extend(row.get("probe_id") for row in batch_rows)
+                    probe_ids.extend((row.get("probe_id") or row.get("aux_id")) for row in batch_rows)
                     position_ids.extend((row.get("matched_position_id") or row.get("position_id")) for row in batch_rows)
                     splits.extend(row.get("split") for row in batch_rows)
                     sources.extend(row.get("source") for row in batch_rows)

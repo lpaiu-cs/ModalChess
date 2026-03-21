@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-root", default="outputs/week6/embedding_exports")
     parser.add_argument("--corpus-root", default="data/pilot/language_probe_v2")
     parser.add_argument("--output-dir", default="outputs/week7/raw_text_retrieval")
+    parser.add_argument("--family", action="append", default=[])
     parser.add_argument("--backbone-seed", type=int, action="append", dest="backbone_seeds", default=[])
     parser.add_argument("--mate-min-df", type=int, default=50)
     parser.add_argument("--puzzle-min-df", type=int, default=25)
@@ -37,6 +38,7 @@ def main() -> None:
         mate_min_df=args.mate_min_df,
         puzzle_min_df=args.puzzle_min_df,
         max_vocab_size=args.max_vocab_size,
+        families=args.family or None,
     )
     print(f"Wrote raw-text retrieval summary to {result['summary_path']}")
 

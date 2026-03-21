@@ -1,4 +1,4 @@
-"""Audit auxiliary language sources for week-7 without changing source semantics."""
+"""Audit auxiliary language sources for week-8 without changing source semantics."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _parse_source_args(values: list[str]) -> dict[str, str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", default="data/pilot/language_probe_v3/reports")
+    parser.add_argument("--output-dir", default="data/pilot/language_probe_v4/reports")
     parser.add_argument("--source", action="append", default=[], help="name=path form; repeatable")
     return parser.parse_args()
 

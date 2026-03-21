@@ -127,19 +127,25 @@ def compare_probe_split_roots(
 
     previous_manifest = _load_manifest(previous_root_path / "manifests" / "probe_manifest.yaml")
     current_manifest = _load_manifest(current_root_path / "manifests" / "probe_manifest.yaml")
-    note = (
-        "Split assignments changed for some rows after switching to game-aware grouping."
-        if total_rows_with_split_change > 0
-        else "No split assignments changed; current sources fell back to source_row_id because no trustworthy repeated game_id groups were available."
-    )
+    previous_strategy = previous_manifest.get("split_strategy_by_source", {})
+    current_strategy = current_manifest.get("split_strategy_by_source", {})
+    if total_rows_with_split_change > 0 and previous_strategy == current_strategy:
+        note = (
+            "Split assignments changed for some rows because the hash salt/build root changed, "
+            "even though both versions still fell back to source_row_id."
+        )
+    elif total_rows_with_split_change > 0:
+        note = "Split assignments changed for some rows after switching to a different split-key strategy."
+    else:
+        note = "No split assignments changed; current sources fell back to source_row_id because no trustworthy repeated game_id groups were available."
     return {
         "previous_root": str(previous_root_path),
         "current_root": str(current_root_path),
         "source_diffs": source_diffs,
         "total_rows_compared": total_rows_compared,
         "total_rows_with_split_change": total_rows_with_split_change,
-        "previous_split_strategy_by_source": previous_manifest.get("split_strategy_by_source", {}),
-        "current_split_strategy_by_source": current_manifest.get("split_strategy_by_source", {}),
+        "previous_split_strategy_by_source": previous_strategy,
+        "current_split_strategy_by_source": current_strategy,
         "potential_leakage_reduction_note": note,
     }
 

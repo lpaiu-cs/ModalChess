@@ -135,7 +135,7 @@ def _normalize_mate_row(
         "theme_tags": None,
         "history_fens": row.get("history_fens") or [fen],
         "metadata": {
-            "game_id": row.get("game_id"),
+            "game_id": _candidate_game_id(row),
             "preferred_move": row.get("preferred_move"),
             "original_source": row.get("source", "mate"),
         },
@@ -166,7 +166,7 @@ def _normalize_puzzle_row(
         "theme_tags": parse_space_or_comma_separated(row.get("theme_tags") or row.get("concept_tags")),
         "history_fens": row.get("history_fens") or [fen],
         "metadata": {
-            "game_id": row.get("game_id"),
+            "game_id": _candidate_game_id(row),
             "next_fen": row.get("next_fen"),
             "original_source": row.get("source", "lichess_puzzle"),
         },
@@ -241,6 +241,10 @@ def build_probe_corpora(
         "manifest_path": str(manifest_path),
         "counts": split_counts,
         "outputs": outputs,
+        "split_strategy_by_source": {
+            source_name: asdict(strategy)
+            for source_name, strategy in split_strategy_by_source.items()
+        },
     }
 
 

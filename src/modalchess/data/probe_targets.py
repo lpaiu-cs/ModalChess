@@ -35,7 +35,22 @@ class ProbeTargetConfig:
     drop_rare_labels_from_output: bool = False
 
 
-def derive_mate_target_payload(row: dict[str, Any]) -> dict[str, Any]:
+def merge_mate_keyword_maps(
+    extra_keyword_map: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Merge the default MATE keyword map with conservative extensions."""
+    merged = dict(MATE_KEYWORD_MAP)
+    if extra_keyword_map is None:
+        return merged
+    for label_name, keywords in extra_keyword_map.items():
+        merged[label_name] = tuple(dict.fromkeys((*merged.get(label_name, ()), *keywords)))
+    return merged
+
+
+def derive_mate_target_payload(
+    row: dict[str, Any],
+    keyword_map: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, Any]:
     """Derive conservative multi-label targets from MATE text."""
     text = " ".join(
         str(value or "")
@@ -43,7 +58,8 @@ def derive_mate_target_payload(row: dict[str, Any]) -> dict[str, Any]:
     ).lower()
     labels: list[str] = []
     keyword_hits: dict[str, list[str]] = {}
-    for label_name, keywords in MATE_KEYWORD_MAP.items():
+    active_keyword_map = merge_mate_keyword_maps(keyword_map)
+    for label_name, keywords in active_keyword_map.items():
         hits = [keyword for keyword in keywords if keyword in text]
         if hits:
             labels.append(label_name)

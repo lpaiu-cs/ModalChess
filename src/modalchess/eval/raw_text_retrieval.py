@@ -71,6 +71,20 @@ def _mate_text_document(row: dict[str, Any]) -> str:
     )
 
 
+def _aux_text_document(row: dict[str, Any]) -> str:
+    text = str(row.get("text") or "").strip()
+    if text:
+        return text
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    return "\n".join(
+        str(item.get("content") or "").strip()
+        for item in messages
+        if isinstance(item, dict) and str(item.get("content") or "").strip()
+    )
+
+
 def _puzzle_synthetic_document(corpus_row: dict[str, Any], target_row: dict[str, Any]) -> str:
     tags = [_normalize_tag_text(tag) for tag in corpus_row.get("theme_tags") or target_row.get("target_labels") or []]
     flag_tokens = []
@@ -317,9 +331,10 @@ def _summary_markdown(aggregate_rows: list[dict[str, Any]]) -> str:
     lines = ["# Raw-Text Retrieval Summary", ""]
     lines.append("- MATE uses real strategy/tactic text retrieval.")
     lines.append("- Puzzle uses synthetic tag-string retrieval from themes and special-rule flags.")
+    lines.append("- Auxiliary board-anchored corpora, when present, use raw text from external text-bearing sources.")
     lines.append("- These are evaluation-only retrieval probes, not language-fusion results.")
     lines.append("")
-    for family in ("mate", "puzzle"):
+    for family in ("mate", "puzzle", "aux_board_anchored"):
         family_rows = [row for row in aggregate_rows if row["family"] == family]
         if not family_rows:
             continue
@@ -364,6 +379,8 @@ def _documents_for_family(
 ) -> list[str]:
     if family == "mate":
         return [_mate_text_document(row) for row in corpus_rows]
+    if family == "aux_board_anchored":
+        return [_aux_text_document(row) for row in corpus_rows]
     if target_rows is None:
         raise ValueError("puzzle retrieval에는 target rows가 필요하다.")
     return [
@@ -381,6 +398,7 @@ def run_raw_text_retrieval_probes(
     mate_min_df: int = 50,
     puzzle_min_df: int = 25,
     max_vocab_size: int = 256,
+    families: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run raw-text/synthetic-tag retrieval probes on frozen embeddings."""
     seed_list = backbone_seeds or [11, 17, 23]
@@ -389,11 +407,18 @@ def run_raw_text_retrieval_probes(
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
+    family_specs = {
+        "mate": {"min_df": mate_min_df, "text_side_kind": "raw_text"},
+        "puzzle": {"min_df": puzzle_min_df, "text_side_kind": "synthetic_tag_string"},
+        "aux_board_anchored": {"min_df": mate_min_df, "text_side_kind": "raw_text"},
+    }
+    active_families = families or ["mate", "puzzle"]
     results: list[dict[str, Any]] = []
-    for family, min_df, text_side_kind in (
-        ("mate", mate_min_df, "raw_text"),
-        ("puzzle", puzzle_min_df, "synthetic_tag_string"),
-    ):
+    for family in active_families:
+        if family not in family_specs:
+            raise ValueError(f"지원하지 않는 retrieval family: {family}")
+        min_df = int(family_specs[family]["min_df"])
+        text_side_kind = str(family_specs[family]["text_side_kind"])
         corpus_rows_by_split = {
             split_name: _load_jsonl(corpus_root_path / f"{family}_{split_name}.jsonl")
             for split_name in ("train", "val", "test")
@@ -456,7 +481,10 @@ def run_raw_text_retrieval_probes(
                         split_features["val"],
                         split_features["test"],
                     )
-                    for probe_model, train_limit in (("linear", None), ("mlp", 100000 if family == "mate" else 50000)):
+                    for probe_model, train_limit in (
+                        ("linear", None),
+                        ("mlp", 100000 if family in {"mate", "aux_board_anchored"} else 50000),
+                    ):
                         model, val_alignment = _train_text_probe(
                             model_kind=probe_model,
                             train_features=train_features,

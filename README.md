@@ -204,3 +204,33 @@ python scripts/run_raw_text_retrieval_probes.py --embedding-root outputs/week6/e
 - puzzle retrieval은 natural text가 아니라 synthetic tag-string retrieval입니다.
 - 둘은 같은 종류의 언어 평가가 아니므로 summary에서 분리해서 해석해야 합니다.
 - week-7도 여전히 eval-only week입니다. connector training, LLM fusion, rationale training은 하지 않습니다.
+
+## 8주차 split hygiene fix / auxiliary fetch / realism upgrade
+
+8주차는 alignment training을 시작하지 않고, week-6/7에서 남아 있던 data realism과 split hygiene gap을 operationalize합니다.
+
+- split-hygiene fix: `scripts/build_probe_corpora.py`, `src/modalchess/data/probe_corpora.py`
+- auxiliary fetch lock: `scripts/fetch_aux_language_sources.py`
+- file-level auxiliary normalization: `scripts/build_aux_language_corpora.py`
+- target realism report + conservative MATE v2 targets: `scripts/report_target_realism.py`
+- optional aux raw-text retrieval rerun: `scripts/run_raw_text_retrieval_probes.py --family aux_board_anchored`
+
+실행 순서는 보통 다음과 같습니다.
+
+```bash
+python scripts/build_probe_corpora.py --mate-path data/pilot/real_v1/language_mate.jsonl --puzzle-path data/pilot/real_v1/puzzle_eval.jsonl --output-root data/pilot/language_probe_v3_fix --prefer-game-id-group-split --min-game-id-group-size 2 --report-output-dir data/pilot/language_probe_v3_fix/reports --compare-root data/pilot/language_probe_v2
+python scripts/build_probe_targets.py --input-root data/pilot/language_probe_v3_fix --output-root data/pilot/language_probe_v3_fix
+python scripts/fetch_aux_language_sources.py --manifest-path data/pilot/language_probe_v4/manifests/aux_fetch_lock.yaml --notes-path data/pilot/language_probe_v4/manifests/aux_fetch_notes.md
+python scripts/build_aux_language_corpora.py --output-root data/pilot/language_probe_v4
+python scripts/report_target_realism.py --probe-root data/pilot/language_probe_v3_fix --aux-root data/pilot/language_probe_v4 --mate-keyword-audit-path data/pilot/language_probe_v3/reports/mate_keyword_audit.json --output-root data/pilot/language_probe_v4
+python scripts/export_backbone_embeddings.py --checkpoint outputs/week3/exp3_ground_state/seed11/best_model.pt --output-dir outputs/week8/embedding_exports/g1/seed11 --format pt --dataset aux_board_anchored_train=data/pilot/language_probe_v4/aux_board_anchored_train.jsonl --dataset aux_board_anchored_val=data/pilot/language_probe_v4/aux_board_anchored_val.jsonl --dataset aux_board_anchored_test=data/pilot/language_probe_v4/aux_board_anchored_test.jsonl
+python scripts/run_raw_text_retrieval_probes.py --embedding-root outputs/week8/embedding_exports --corpus-root data/pilot/language_probe_v4 --output-dir outputs/week8/raw_text_retrieval_v2 --family aux_board_anchored --backbone-seed 11 --backbone-seed 17 --backbone-seed 23
+```
+
+주의점은 다음과 같습니다.
+
+- `prefer_game_id_group_split`는 다시 실제 code path로 연결됐지만, 현재 MATE/puzzle probe corpora는 repeated `game_id`가 없어 여전히 `source_row_id` fallback이 맞습니다.
+- Waterhorse snapshot은 bounded partial fetch입니다. week-8 기본 fetch는 `annotated_pgn`과 selected `dataset_info`만 받습니다.
+- auxiliary normalization은 file-by-file로 진행하고, `board_anchored_text`, `text_only`, `unusable`를 섞지 않습니다.
+- `mate_targets_v2`는 conservative audit 기반 부가 target set이며, week-6 target을 silently replace하지 않습니다.
+- week-8 raw-text retrieval은 여전히 evaluation-only probe입니다. tiny frozen alignment readiness를 판단하는 근거이지, language fusion 결과가 아닙니다.

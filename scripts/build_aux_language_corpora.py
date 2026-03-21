@@ -1,4 +1,4 @@
-"""Build board-anchored/text-only auxiliary language corpora for week-7."""
+"""Build board-anchored/text-only auxiliary language corpora for week-8."""
 
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ def _parse_source_args(values: list[str]) -> dict[str, str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-root", default="data/pilot/language_probe_v3")
+    parser.add_argument("--output-root", default="data/pilot/language_probe_v4")
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
-    parser.add_argument("--split-salt", default="modalchess_week7_aux")
+    parser.add_argument("--split-salt", default="modalchess_week8_aux")
     parser.add_argument("--source", action="append", default=[], help="name=path form; repeatable")
     return parser.parse_args()
 

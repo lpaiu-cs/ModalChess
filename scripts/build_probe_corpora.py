@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from modalchess.data.preprocessing_common import StableSplitConfig
 from modalchess.data.probe_corpora import ProbeCorpusConfig, build_probe_corpora
+from modalchess.data.probe_reports import write_probe_reports
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,6 +31,8 @@ def parse_args() -> argparse.Namespace:
         default=True,
     )
     parser.add_argument("--min-game-id-group-size", type=int, default=2)
+    parser.add_argument("--report-output-dir", default=None)
+    parser.add_argument("--compare-root", default=None)
     return parser.parse_args()
 
 
@@ -49,6 +52,12 @@ def main() -> None:
             min_game_id_group_size=args.min_game_id_group_size,
         ),
     )
+    if args.report_output_dir:
+        write_probe_reports(
+            input_root=args.output_root,
+            output_dir=args.report_output_dir,
+            compare_root=args.compare_root,
+        )
     print(f"Wrote probe manifest to {result['manifest_path']}")
 
 
