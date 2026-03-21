@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--compare-root", default=None)
     return parser.parse_args()
 
 
@@ -27,6 +28,7 @@ def main() -> None:
     result = write_probe_reports(
         input_root=args.input_root,
         output_dir=args.output_dir,
+        compare_root=args.compare_root,
     )
     print(
         "Wrote probe reports to "

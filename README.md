@@ -150,3 +150,30 @@ python scripts/run_language_readiness_probes.py --embedding-root outputs/week5/e
 - MATE `candidate_moves`는 single `target_move_uci`로 강제 변환하지 않습니다.
 - puzzle는 text-free theme probe 성격이 강하고, MATE는 coarse text-derived tag probe 성격이 강합니다.
 - week-6 진입 상태는 `outputs/week5/readiness_probes/*`와 `data/pilot/language_probe_v1/reports/*`를 함께 보고 판단합니다.
+
+## 6주차 split-hygiene v2 및 multi-seed eval-only probe
+
+6주차는 frozen backbone을 유지한 채, week-5 probe의 방법론 안정성을 강화합니다.
+
+- probe corpora를 `data/pilot/language_probe_v2`로 다시 빌드합니다.
+- split은 가능하면 `game_id` 그룹 기준을 우선 사용하고, 반복 그룹이 없으면 명시적으로 `source_row_id`로 fallback합니다.
+- readiness probe는 G1/G3 모두 seed `11/17/23`로 다시 측정합니다.
+- retrieval-style probe는 lexical bag-of-words 기준의 eval-only readiness check이며, language fusion 결과로 해석하지 않습니다.
+
+실행 순서는 보통 다음과 같습니다.
+
+```bash
+python scripts/build_probe_corpora.py --mate-path data/pilot/real_v1/language_mate.jsonl --puzzle-path data/pilot/real_v1/puzzle_eval.jsonl --output-root data/pilot/language_probe_v2 --prefer-game-id-group-split --min-game-id-group-size 2
+python scripts/build_probe_targets.py --input-root data/pilot/language_probe_v2 --output-root data/pilot/language_probe_v2 --rare-label-threshold 20
+python scripts/report_probe_corpora.py --input-root data/pilot/language_probe_v2 --output-dir data/pilot/language_probe_v2/reports --compare-root data/pilot/language_probe_v1
+python scripts/export_backbone_embeddings.py --checkpoint outputs/week3/exp3_ground_state/seed11/best_model.pt --output-dir outputs/week6/embedding_exports/g1/seed11 --format pt --dataset mate_train=data/pilot/language_probe_v2/mate_train.jsonl --dataset mate_val=data/pilot/language_probe_v2/mate_val.jsonl --dataset mate_test=data/pilot/language_probe_v2/mate_test.jsonl --dataset puzzle_train=data/pilot/language_probe_v2/puzzle_train.jsonl --dataset puzzle_val=data/pilot/language_probe_v2/puzzle_val.jsonl --dataset puzzle_test=data/pilot/language_probe_v2/puzzle_test.jsonl
+python scripts/run_language_readiness_probes.py --embedding-root outputs/week6/embedding_exports --target-root data/pilot/language_probe_v2 --output-dir outputs/week6/readiness_probes --backbone-seed 11 --backbone-seed 17 --backbone-seed 23
+python scripts/run_retrieval_readiness_probes.py --embedding-root outputs/week6/embedding_exports --corpus-root data/pilot/language_probe_v2 --target-root data/pilot/language_probe_v2 --output-dir outputs/week6/retrieval_probes --backbone-seed 11 --backbone-seed 17 --backbone-seed 23
+```
+
+주의점은 다음과 같습니다.
+
+- week-6도 여전히 eval-only language work입니다. connector training, LLM fusion, rationale training은 하지 않습니다.
+- split hygiene v2 report는 `data/pilot/language_probe_v2/reports/v1_vs_v2_split_diff.json`에 남깁니다.
+- readiness aggregate는 `outputs/week6/readiness_probes/probe_results_aggregate.csv`에 남깁니다.
+- retrieval probe는 `outputs/week6/retrieval_probes/*`에 저장되며, 반드시 retrieval-style readiness로만 해석합니다.

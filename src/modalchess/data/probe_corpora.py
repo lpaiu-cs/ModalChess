@@ -1,4 +1,4 @@
-"""Standalone language probe corpora builders for week-5."""
+"""Standalone language probe corpora builders for week-5/week-6."""
 
 from __future__ import annotations
 
@@ -26,6 +26,19 @@ class ProbeCorpusConfig:
     split_config: StableSplitConfig = field(
         default_factory=lambda: StableSplitConfig(salt="modalchess_week5_probe")
     )
+    prefer_game_id_group_split: bool = True
+    min_game_id_group_size: int = 2
+
+
+@dataclass(slots=True)
+class SplitStrategy:
+    """Source-level split-key decision."""
+
+    split_key_type: str
+    repeated_group_count: int
+    max_group_size: int
+    candidate_game_id_rows: int
+    fallback_reason: str | None = None
 
 
 def _source_row_id(row: Mapping[str, Any]) -> str:
@@ -36,15 +49,83 @@ def _source_row_id(row: Mapping[str, Any]) -> str:
     raise ValueError("source_row_id를 추출할 수 없다.")
 
 
-def _normalize_mate_row(row: Mapping[str, Any], config: ProbeCorpusConfig) -> dict[str, Any]:
+def _candidate_game_id(row: Mapping[str, Any]) -> str | None:
+    metadata = row.get("metadata")
+    if isinstance(metadata, Mapping):
+        value = metadata.get("game_id")
+        if value not in (None, ""):
+            return str(value)
+    value = row.get("game_id")
+    if value not in (None, ""):
+        return str(value)
+    return None
+
+
+def _resolve_split_strategy(
+    rows: list[Mapping[str, Any]],
+    config: ProbeCorpusConfig,
+) -> SplitStrategy:
+    candidate_counter: Counter[str] = Counter()
+    candidate_game_id_rows = 0
+    for row in rows:
+        candidate_game_id = _candidate_game_id(row)
+        if candidate_game_id is None:
+            continue
+        candidate_counter[candidate_game_id] += 1
+        candidate_game_id_rows += 1
+
+    repeated_group_count = sum(1 for count in candidate_counter.values() if count >= config.min_game_id_group_size)
+    max_group_size = max(candidate_counter.values()) if candidate_counter else 0
+    if config.prefer_game_id_group_split and repeated_group_count > 0:
+        return SplitStrategy(
+            split_key_type="game_id",
+            repeated_group_count=repeated_group_count,
+            max_group_size=max_group_size,
+            candidate_game_id_rows=candidate_game_id_rows,
+        )
+    fallback_reason = "no_repeated_game_id_groups"
+    if not config.prefer_game_id_group_split:
+        fallback_reason = "prefer_game_id_group_split_disabled"
+    if candidate_game_id_rows == 0:
+        fallback_reason = "missing_game_id"
+    return SplitStrategy(
+        split_key_type="source_row_id",
+        repeated_group_count=repeated_group_count,
+        max_group_size=max_group_size,
+        candidate_game_id_rows=candidate_game_id_rows,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _split_assignment(
+    row: Mapping[str, Any],
+    config: ProbeCorpusConfig,
+    strategy: SplitStrategy,
+) -> tuple[str, str]:
     source_row_id = _source_row_id(row)
-    split_name = assign_split_by_game_id(source_row_id, config.split_config)
+    if strategy.split_key_type == "game_id":
+        split_group_id = _candidate_game_id(row) or source_row_id
+    else:
+        split_group_id = source_row_id
+    split_name = assign_split_by_game_id(split_group_id, config.split_config)
+    return split_name, split_group_id
+
+
+def _normalize_mate_row(
+    row: Mapping[str, Any],
+    config: ProbeCorpusConfig,
+    strategy: SplitStrategy,
+) -> dict[str, Any]:
+    source_row_id = _source_row_id(row)
+    split_name, split_group_id = _split_assignment(row, config, strategy)
     fen = str(row["fen"])
     return {
         "probe_id": stable_hash_text(f"mate:{source_row_id}", prefix="probe_", length=16),
         "source": "mate",
         "source_row_id": source_row_id,
         "split": split_name,
+        "split_key_type": strategy.split_key_type,
+        "split_group_id": split_group_id,
         "fen": fen,
         "fen_4field": normalize_fen_for_eval_join(fen),
         "target_move_uci": None,
@@ -61,15 +142,21 @@ def _normalize_mate_row(row: Mapping[str, Any], config: ProbeCorpusConfig) -> di
     }
 
 
-def _normalize_puzzle_row(row: Mapping[str, Any], config: ProbeCorpusConfig) -> dict[str, Any]:
+def _normalize_puzzle_row(
+    row: Mapping[str, Any],
+    config: ProbeCorpusConfig,
+    strategy: SplitStrategy,
+) -> dict[str, Any]:
     source_row_id = _source_row_id(row)
-    split_name = assign_split_by_game_id(source_row_id, config.split_config)
+    split_name, split_group_id = _split_assignment(row, config, strategy)
     fen = str(row["fen"])
     return {
         "probe_id": stable_hash_text(f"puzzle:{source_row_id}", prefix="probe_", length=16),
         "source": "lichess_puzzle",
         "source_row_id": source_row_id,
         "split": split_name,
+        "split_key_type": strategy.split_key_type,
+        "split_group_id": split_group_id,
         "fen": fen,
         "fen_4field": normalize_fen_for_eval_join(fen),
         "target_move_uci": row.get("target_move_uci"),
@@ -100,9 +187,23 @@ def build_probe_corpora(
     manifest_dir = output_dir / "manifests"
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
+    raw_rows = {
+        "mate": [dict(row) for row in iter_records_from_path(mate_path)],
+        "puzzle": [dict(row) for row in iter_records_from_path(puzzle_path)],
+    }
+    split_strategy_by_source = {
+        source_name: _resolve_split_strategy(rows, corpus_config)
+        for source_name, rows in raw_rows.items()
+    }
     normalized_rows = {
-        "mate": [_normalize_mate_row(row, corpus_config) for row in iter_records_from_path(mate_path)],
-        "puzzle": [_normalize_puzzle_row(row, corpus_config) for row in iter_records_from_path(puzzle_path)],
+        "mate": [
+            _normalize_mate_row(row, corpus_config, split_strategy_by_source["mate"])
+            for row in raw_rows["mate"]
+        ],
+        "puzzle": [
+            _normalize_puzzle_row(row, corpus_config, split_strategy_by_source["puzzle"])
+            for row in raw_rows["puzzle"]
+        ],
     }
     split_counts: dict[str, dict[str, int]] = {}
     outputs: dict[str, str] = {}
@@ -124,6 +225,12 @@ def build_probe_corpora(
         },
         "config": {
             "split_config": asdict(corpus_config.split_config),
+            "prefer_game_id_group_split": corpus_config.prefer_game_id_group_split,
+            "min_game_id_group_size": corpus_config.min_game_id_group_size,
+        },
+        "split_strategy_by_source": {
+            source_name: asdict(strategy)
+            for source_name, strategy in split_strategy_by_source.items()
         },
         "counts": split_counts,
         "outputs": outputs,

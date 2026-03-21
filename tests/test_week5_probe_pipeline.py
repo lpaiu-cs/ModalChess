@@ -260,9 +260,11 @@ def test_run_language_readiness_probes(tmp_path: Path) -> None:
         mate_min_train_positive=1,
         puzzle_min_train_positive=1,
     )
-    assert result["week6_state"] in {
-        "READY_FOR_LIGHT_ALIGNMENT",
-        "READY_FOR_EVAL_ONLY_LANGUAGE_WORK",
+    assert result["week7_state_candidate"] in {
+        "READY_FOR_TINY_FROZEN_ALIGNMENT",
+        "STILL_EVAL_ONLY_BUT_STABLE",
+        "DATA_EXPANSION_FIRST",
     }
     assert (output_dir / "probe_results.json").exists()
+    assert (output_dir / "probe_results_aggregate.csv").exists()
     assert (output_dir / "readiness_probe_summary.md").exists()

@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from modalchess.data.preprocessing_common import iter_records_from_path, write_yaml
+import yaml
+
+from modalchess.data.preprocessing_common import iter_records_from_path
 from modalchess.data.probe_corpora import generate_probe_rationale_readiness
 
 
@@ -18,6 +20,17 @@ def _load_rows(path: str | Path) -> list[dict[str, Any]]:
     return [dict(row) for row in iter_records_from_path(path_obj)]
 
 
+def _load_manifest(path: str | Path) -> dict[str, Any]:
+    manifest_path = Path(path)
+    if not manifest_path.exists():
+        return {}
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
 def _markdown_from_probe_report(report: dict[str, Any]) -> str:
     lines = ["# Probe Corpora Report", ""]
     lines.append("## Counts")
@@ -25,6 +38,17 @@ def _markdown_from_probe_report(report: dict[str, Any]) -> str:
         lines.append(
             f"- `{source_name}`: train={split_counts['train']}, val={split_counts['val']}, test={split_counts['test']}"
         )
+    lines.append("")
+    lines.append("## Split Hygiene")
+    for source_name, strategy in report.get("split_strategy_by_source", {}).items():
+        lines.append(
+            f"- `{source_name}`: split_key_type={strategy['split_key_type']}, "
+            f"candidate_game_id_rows={strategy['candidate_game_id_rows']}, "
+            f"repeated_group_count={strategy['repeated_group_count']}, "
+            f"max_group_size={strategy['max_group_size']}"
+        )
+        if strategy.get("fallback_reason"):
+            lines.append(f"  fallback_reason={strategy['fallback_reason']}")
     lines.append("")
     lines.append("## Empty Text Rates")
     for source_name, rate in report["empty_text_rates"].items():
@@ -59,9 +83,71 @@ def _markdown_from_rationale_report(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def compare_probe_split_roots(
+    *,
+    previous_root: str | Path,
+    current_root: str | Path,
+) -> dict[str, Any]:
+    """Compare split assignments between two probe corpus roots."""
+    previous_root_path = Path(previous_root)
+    current_root_path = Path(current_root)
+    source_names = ("mate", "puzzle")
+    source_name_map = {
+        "mate": "mate",
+        "puzzle": "lichess_puzzle",
+    }
+    source_diffs: dict[str, Any] = {}
+    total_rows_compared = 0
+    total_rows_with_split_change = 0
+
+    for source_name in source_names:
+        previous_rows: dict[str, dict[str, Any]] = {}
+        current_rows: dict[str, dict[str, Any]] = {}
+        for split_name in ("train", "val", "test"):
+            for row in _load_rows(previous_root_path / f"{source_name}_{split_name}.jsonl"):
+                previous_rows[str(row["source_row_id"])] = row
+            for row in _load_rows(current_root_path / f"{source_name}_{split_name}.jsonl"):
+                current_rows[str(row["source_row_id"])] = row
+
+        shared_ids = sorted(set(previous_rows) & set(current_rows))
+        changed_ids = [
+            source_row_id
+            for source_row_id in shared_ids
+            if str(previous_rows[source_row_id].get("split")) != str(current_rows[source_row_id].get("split"))
+        ]
+        total_rows_compared += len(shared_ids)
+        total_rows_with_split_change += len(changed_ids)
+        source_diffs[source_name_map[source_name]] = {
+            "rows_compared": len(shared_ids),
+            "rows_with_split_change": len(changed_ids),
+            "rows_only_in_previous": len(set(previous_rows) - set(current_rows)),
+            "rows_only_in_current": len(set(current_rows) - set(previous_rows)),
+            "changed_source_row_ids_sample": changed_ids[:50],
+        }
+
+    previous_manifest = _load_manifest(previous_root_path / "manifests" / "probe_manifest.yaml")
+    current_manifest = _load_manifest(current_root_path / "manifests" / "probe_manifest.yaml")
+    note = (
+        "Split assignments changed for some rows after switching to game-aware grouping."
+        if total_rows_with_split_change > 0
+        else "No split assignments changed; current sources fell back to source_row_id because no trustworthy repeated game_id groups were available."
+    )
+    return {
+        "previous_root": str(previous_root_path),
+        "current_root": str(current_root_path),
+        "source_diffs": source_diffs,
+        "total_rows_compared": total_rows_compared,
+        "total_rows_with_split_change": total_rows_with_split_change,
+        "previous_split_strategy_by_source": previous_manifest.get("split_strategy_by_source", {}),
+        "current_split_strategy_by_source": current_manifest.get("split_strategy_by_source", {}),
+        "potential_leakage_reduction_note": note,
+    }
+
+
 def generate_probe_corpora_report(*, input_root: str | Path) -> dict[str, Any]:
     """Generate standalone probe corpus QA report."""
     root = Path(input_root)
+    manifest = _load_manifest(root / "manifests" / "probe_manifest.yaml")
     counts_by_source_split: dict[str, dict[str, int]] = {}
     empty_text_rates: dict[str, float] = {}
     label_counts: dict[str, dict[str, int]] = {}
@@ -105,6 +191,7 @@ def generate_probe_corpora_report(*, input_root: str | Path) -> dict[str, Any]:
 
     return {
         "input_root": str(root),
+        "split_strategy_by_source": manifest.get("split_strategy_by_source", {}),
         "counts_by_source_split": counts_by_source_split,
         "empty_text_rates": empty_text_rates,
         "null_target_move_rates": null_target_move_rates,
@@ -118,6 +205,7 @@ def write_probe_reports(
     *,
     input_root: str | Path,
     output_dir: str | Path,
+    compare_root: str | Path | None = None,
 ) -> dict[str, str]:
     """Write both probe corpus and rationale-readiness reports."""
     output_root = Path(output_dir)
@@ -129,14 +217,19 @@ def write_probe_reports(
     probe_md = output_root / "probe_corpora_report.md"
     rationale_json = output_root / "rationale_readiness_report.json"
     rationale_md = output_root / "rationale_readiness_report.md"
+    diff_json = output_root / "v1_vs_v2_split_diff.json"
 
     probe_json.write_text(json.dumps(probe_report, indent=2), encoding="utf-8")
     probe_md.write_text(_markdown_from_probe_report(probe_report), encoding="utf-8")
     rationale_json.write_text(json.dumps(rationale_report, indent=2), encoding="utf-8")
     rationale_md.write_text(_markdown_from_rationale_report(rationale_report), encoding="utf-8")
+    if compare_root is not None:
+        diff_payload = compare_probe_split_roots(previous_root=compare_root, current_root=input_root)
+        diff_json.write_text(json.dumps(diff_payload, indent=2), encoding="utf-8")
     return {
         "probe_json": str(probe_json),
         "probe_md": str(probe_md),
         "rationale_json": str(rationale_json),
         "rationale_md": str(rationale_md),
+        "diff_json": str(diff_json) if compare_root is not None else "",
     }

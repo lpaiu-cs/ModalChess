@@ -32,6 +32,7 @@ class ProbeTargetConfig:
     """Target-derivation configuration."""
 
     rare_label_threshold: int = 20
+    drop_rare_labels_from_output: bool = False
 
 
 def derive_mate_target_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -93,27 +94,58 @@ def build_probe_targets(
     counts: dict[str, Any] = {}
     outputs: dict[str, str] = {}
     label_counts_by_source: dict[str, dict[str, int]] = {}
+    rare_labels_by_source: dict[str, list[str]] = {}
+    empty_text_rates_by_source: dict[str, float] = {}
+    labels_removed_by_source: dict[str, list[str]] = {}
     warnings: list[str] = []
 
     for source_name, derive_fn in (("mate", derive_mate_target_payload), ("puzzle", derive_puzzle_target_payload)):
         label_counter: Counter[str] = Counter()
         split_counts: dict[str, int] = {}
+        split_target_rows: dict[str, list[dict[str, Any]]] = {}
+        source_rows: list[dict[str, Any]] = []
         for split_name in ("train", "val", "test"):
             input_path = input_dir / f"{source_name}_{split_name}.jsonl"
             rows = [dict(row) for row in iter_records_from_path(input_path)]
+            source_rows.extend(rows)
             target_rows = [derive_fn(row) for row in rows]
+            split_target_rows[split_name] = target_rows
             for target_row in target_rows:
                 for label in target_row.get("target_labels", []):
                     label_counter[str(label)] += 1
+
+        rare_labels = sorted([label_name for label_name, label_count in label_counter.items() if label_count < target_config.rare_label_threshold])
+        rare_label_set = set(rare_labels)
+        rare_labels_by_source[source_name] = rare_labels
+        labels_removed_by_source[source_name] = rare_labels if target_config.drop_rare_labels_from_output else []
+        empty_text_count = sum(
+            int(not (row.get("strategy_text") or row.get("tactic_text")))
+            for row in source_rows
+        )
+        empty_text_rates_by_source[source_name] = (empty_text_count / len(source_rows)) if source_rows else 1.0
+
+        for split_name in ("train", "val", "test"):
+            target_rows = split_target_rows[split_name]
+            if target_config.drop_rare_labels_from_output and rare_labels:
+                target_rows = [
+                    {
+                        **target_row,
+                        "target_labels": [
+                            str(label)
+                            for label in target_row.get("target_labels", [])
+                            if str(label) not in rare_label_set
+                        ],
+                    }
+                    for target_row in target_rows
+                ]
             output_path = output_dir / f"{source_name}_targets_{split_name}.jsonl"
             write_jsonl(output_path, target_rows)
             outputs[f"{source_name}_{split_name}"] = str(output_path)
             split_counts[split_name] = len(target_rows)
         label_counts_by_source[source_name] = dict(sorted(label_counter.items()))
         counts[source_name] = split_counts
-        for label_name, label_count in label_counter.items():
-            if label_count < target_config.rare_label_threshold:
-                warnings.append(f"{source_name} label `{label_name}` is rare ({label_count}).")
+        for label_name in rare_labels:
+            warnings.append(f"{source_name} label `{label_name}` is rare ({label_counter[label_name]}).")
 
     manifest_path = output_dir / "manifests" / "probe_targets_manifest.yaml"
     write_yaml(
@@ -121,7 +153,10 @@ def build_probe_targets(
         {
             "config": asdict(target_config),
             "counts": counts,
-            "label_counts_by_source": label_counts_by_source,
+            "label_frequencies_by_source": label_counts_by_source,
+            "rare_labels_by_source": rare_labels_by_source,
+            "empty_text_rates_by_source": empty_text_rates_by_source,
+            "labels_removed_by_rarity_threshold": labels_removed_by_source,
             "warnings": warnings,
             "outputs": outputs,
         },
@@ -130,6 +165,9 @@ def build_probe_targets(
         "manifest_path": str(manifest_path),
         "counts": counts,
         "label_counts_by_source": label_counts_by_source,
+        "rare_labels_by_source": rare_labels_by_source,
+        "empty_text_rates_by_source": empty_text_rates_by_source,
+        "labels_removed_by_rarity_threshold": labels_removed_by_source,
         "warnings": warnings,
         "outputs": outputs,
     }

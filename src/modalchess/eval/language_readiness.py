@@ -278,50 +278,166 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def _summary_markdown(state_name: str, rows: list[dict[str, Any]]) -> str:
-    lines = ["# Readiness Probe Summary", ""]
-    lines.append(f"- week6_state: `{state_name}`")
-    lines.append("")
-    for family in ("puzzle", "mate"):
-        family_rows = [row for row in rows if row["family"] == family and row["probe_model"] != "baseline"]
-        if not family_rows:
-            continue
-        best_row = max(family_rows, key=lambda row: row["test_micro_average_precision"])
-        lines.append(
-            f"- `{family}` best: backbone={best_row['backbone']}, pool={best_row['pool']}, "
-            f"probe={best_row['probe_model']}, test_micro_ap={best_row['test_micro_average_precision']:.4f}, "
-            f"test_micro_f1={best_row['test_micro_f1']:.4f}"
+def _result_metrics() -> tuple[str, ...]:
+    return (
+        "val_micro_f1",
+        "val_macro_f1",
+        "val_micro_average_precision",
+        "val_macro_average_precision",
+        "test_micro_f1",
+        "test_macro_f1",
+        "test_micro_average_precision",
+        "test_macro_average_precision",
+    )
+
+
+def _aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (
+            str(row["family"]),
+            str(row["backbone"]),
+            str(row["pool"]),
+            str(row["probe_model"]),
         )
-    return "\n".join(lines) + "\n"
+        grouped.setdefault(key, []).append(row)
+
+    aggregate_rows: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        family, backbone, pool, probe_model = key
+        group_rows = sorted(grouped[key], key=lambda row: int(row["seed"]))
+        aggregate_row: dict[str, Any] = {
+            "family": family,
+            "backbone": backbone,
+            "pool": pool,
+            "probe_model": probe_model,
+            "seed_count": len(group_rows),
+            "seeds": [int(row["seed"]) for row in group_rows],
+            "label_count": int(group_rows[0]["label_count"]),
+            "train_rows_mean": statistics.fmean(float(row["train_rows"]) for row in group_rows),
+            "val_rows_mean": statistics.fmean(float(row["val_rows"]) for row in group_rows),
+            "test_rows_mean": statistics.fmean(float(row["test_rows"]) for row in group_rows),
+        }
+        for metric_name in _result_metrics():
+            metric_values = [float(row[metric_name]) for row in group_rows]
+            aggregate_row[f"{metric_name}_mean"] = statistics.fmean(metric_values)
+            aggregate_row[f"{metric_name}_std"] = statistics.stdev(metric_values) if len(metric_values) > 1 else 0.0
+        aggregate_rows.append(aggregate_row)
+    return aggregate_rows
 
 
-def _decide_week6_state(rows: list[dict[str, Any]]) -> str:
-    non_baseline_rows = [row for row in rows if row["probe_model"] != "baseline"]
-    if not non_baseline_rows:
-        return "DATA_EXPANSION_FIRST"
-    grouped_baselines = {
-        (row["family"], row["backbone"], row["pool"]): row
+def _best_row_for_family(
+    rows: list[dict[str, Any]],
+    family: str,
+    *,
+    baseline: bool,
+) -> dict[str, Any] | None:
+    family_rows = [
+        row
         for row in rows
-        if row["probe_model"] == "baseline"
+        if row["family"] == family and ((row["probe_model"] == "baseline") == baseline)
+    ]
+    if not family_rows:
+        return None
+    return max(
+        family_rows,
+        key=lambda row: (
+            float(row.get("test_micro_average_precision_mean", row.get("test_micro_average_precision", 0.0))),
+            float(row.get("test_micro_f1_mean", row.get("test_micro_f1", 0.0))),
+        ),
+    )
+
+
+def _family_signal_summary(aggregate_rows: list[dict[str, Any]], family: str) -> dict[str, Any]:
+    best_probe = _best_row_for_family(aggregate_rows, family, baseline=False)
+    best_baseline = _best_row_for_family(aggregate_rows, family, baseline=True)
+    if best_probe is None or best_baseline is None:
+        return {
+            "family": family,
+            "has_signal": False,
+            "ap_gain": 0.0,
+            "f1_gain": 0.0,
+        }
+    ap_gain = float(best_probe["test_micro_average_precision_mean"] - best_baseline["test_micro_average_precision_mean"])
+    f1_gain = float(best_probe["test_micro_f1_mean"] - best_baseline["test_micro_f1_mean"])
+    return {
+        "family": family,
+        "has_signal": ap_gain > 0.02 or f1_gain > 0.05,
+        "strong_signal": ap_gain > 0.06 and f1_gain > 0.10,
+        "ap_gain": ap_gain,
+        "f1_gain": f1_gain,
+        "best_probe": best_probe,
+        "best_baseline": best_baseline,
     }
-    strong_families = set()
-    weak = True
-    for row in non_baseline_rows:
-        baseline = grouped_baselines.get((row["family"], row["backbone"], row["pool"]))
-        if baseline is None:
-            continue
-        ap_gain = row["test_micro_average_precision"] - baseline["test_micro_average_precision"]
-        f1_gain = row["test_micro_f1"] - baseline["test_micro_f1"]
-        if ap_gain > 0.10 and f1_gain > 0.10:
-            strong_families.add(row["family"])
-            weak = False
-        elif ap_gain > 0.03 or f1_gain > 0.03:
-            weak = False
-    if "puzzle" in strong_families and "mate" in strong_families:
-        return "READY_FOR_LIGHT_ALIGNMENT"
-    if not weak:
-        return "READY_FOR_EVAL_ONLY_LANGUAGE_WORK"
+
+
+def _decide_week7_state(aggregate_rows: list[dict[str, Any]]) -> str:
+    puzzle_signal = _family_signal_summary(aggregate_rows, "puzzle")
+    mate_signal = _family_signal_summary(aggregate_rows, "mate")
+    if puzzle_signal.get("strong_signal") and mate_signal.get("strong_signal"):
+        return "READY_FOR_TINY_FROZEN_ALIGNMENT"
+    if puzzle_signal.get("has_signal") and mate_signal.get("has_signal"):
+        return "STILL_EVAL_ONLY_BUT_STABLE"
     return "DATA_EXPANSION_FIRST"
+
+
+def _pool_winner(aggregate_rows: list[dict[str, Any]], family: str) -> str | None:
+    candidate_rows = [row for row in aggregate_rows if row["family"] == family and row["probe_model"] != "baseline"]
+    if not candidate_rows:
+        return None
+    best_row = max(candidate_rows, key=lambda row: row["test_micro_average_precision_mean"])
+    return str(best_row["pool"])
+
+
+def _summary_markdown(state_name: str, rows: list[dict[str, Any]], aggregate_rows: list[dict[str, Any]]) -> str:
+    lines = ["# Readiness Probe Summary", ""]
+    lines.append(f"- week7_state_candidate: `{state_name}`")
+    lines.append("")
+    lines.append("## Key Findings")
+    for family in ("puzzle", "mate"):
+        family_signal = _family_signal_summary(aggregate_rows, family)
+        best_row = family_signal.get("best_probe")
+        best_baseline = family_signal.get("best_baseline")
+        if best_row is None or best_baseline is None:
+            continue
+        lines.append(
+            f"- `{family}` best probe: backbone={best_row['backbone']}, pool={best_row['pool']}, "
+            f"probe={best_row['probe_model']}, test_micro_ap={best_row['test_micro_average_precision_mean']:.4f} +/- {best_row['test_micro_average_precision_std']:.4f}, "
+            f"test_micro_f1={best_row['test_micro_f1_mean']:.4f} +/- {best_row['test_micro_f1_std']:.4f}"
+        )
+        lines.append(
+            f"- `{family}` baseline comparison: ap_gain={family_signal['ap_gain']:.4f}, "
+            f"f1_gain={family_signal['f1_gain']:.4f}"
+        )
+    lines.append("")
+    lines.append("## Summary Answers")
+    puzzle_signal = _family_signal_summary(aggregate_rows, "puzzle")
+    mate_signal = _family_signal_summary(aggregate_rows, "mate")
+    lines.append(
+        "- Puzzle signal above baseline after v2 split hygiene and multi-seed evaluation: "
+        f"{'yes' if puzzle_signal.get('has_signal') else 'no'}"
+    )
+    lines.append(
+        "- MATE signal above baseline after v2 split hygiene and multi-seed evaluation: "
+        f"{'yes' if mate_signal.get('has_signal') else 'no'}"
+    )
+    puzzle_best = puzzle_signal.get("best_probe")
+    mate_best = mate_signal.get("best_probe")
+    lines.append(
+        "- G1 vs G3 pattern: "
+        f"puzzle_best={puzzle_best['backbone'] if puzzle_best else 'n/a'}, "
+        f"mate_best={mate_best['backbone'] if mate_best else 'n/a'}"
+    )
+    lines.append(
+        "- Board vs context pooled conclusion: "
+        f"puzzle_best_pool={_pool_winner(aggregate_rows, 'puzzle') or 'n/a'}, "
+        f"mate_best_pool={_pool_winner(aggregate_rows, 'mate') or 'n/a'}"
+    )
+    lines.append(
+        "- Results strong enough to justify future light alignment work: "
+        f"{'yes, but still eval-only by default' if state_name != 'DATA_EXPANSION_FIRST' else 'no'}"
+    )
+    return "\n".join(lines) + "\n"
 
 
 def run_language_readiness_probes(
@@ -330,15 +446,17 @@ def run_language_readiness_probes(
     target_root: str | Path,
     output_dir: str | Path,
     backbone_seed: int = 11,
+    backbone_seeds: list[int] | None = None,
     mate_min_train_positive: int = 25,
     puzzle_min_train_positive: int = 25,
 ) -> dict[str, Any]:
-    """Run week-5 linear/MLP readiness probes on frozen embeddings."""
+    """Run frozen language-readiness probes with optional multi-seed aggregation."""
     embedding_root_path = Path(embedding_root)
     target_root_path = Path(target_root)
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
+    seed_list = backbone_seeds or [backbone_seed]
     results: list[dict[str, Any]] = []
     for family, min_train_positive in (("mate", mate_min_train_positive), ("puzzle", puzzle_min_train_positive)):
         target_rows_by_split = {
@@ -358,87 +476,94 @@ def run_language_readiness_probes(
         }
 
         for backbone_name in ("g1", "g3"):
-            embedding_dir = embedding_root_path / backbone_name / f"seed{backbone_seed}"
-            embedding_payloads = {
-                split_name: _load_embedding_payload(embedding_dir / f"{family}_{split_name}_embeddings.pt")
-                for split_name in ("train", "val", "test")
-            }
-            for pool_name in ("board_pooled", "context_pooled"):
-                split_features: dict[str, torch.Tensor] = {}
-                for split_name in ("train", "val", "test"):
-                    payload = embedding_payloads[split_name]
-                    probe_id_to_index = {str(probe_id): index for index, probe_id in enumerate(payload["probe_id"])}
-                    ordered_indices = torch.tensor(
-                        [probe_id_to_index[probe_id] for probe_id in probe_ids_by_split[split_name]],
-                        dtype=torch.long,
-                    )
-                    split_features[split_name] = payload[pool_name].index_select(0, ordered_indices).float()
+            for seed in seed_list:
+                embedding_dir = embedding_root_path / backbone_name / f"seed{seed}"
+                embedding_payloads = {
+                    split_name: _load_embedding_payload(embedding_dir / f"{family}_{split_name}_embeddings.pt")
+                    for split_name in ("train", "val", "test")
+                }
+                for pool_name in ("board_pooled", "context_pooled"):
+                    split_features: dict[str, torch.Tensor] = {}
+                    for split_name in ("train", "val", "test"):
+                        payload = embedding_payloads[split_name]
+                        probe_id_to_index = {str(probe_id): index for index, probe_id in enumerate(payload["probe_id"])}
+                        ordered_indices = torch.tensor(
+                            [probe_id_to_index[probe_id] for probe_id in probe_ids_by_split[split_name]],
+                            dtype=torch.long,
+                        )
+                        split_features[split_name] = payload[pool_name].index_select(0, ordered_indices).float()
 
-                train_features, val_features, test_features = _standardize_features(
-                    split_features["train"],
-                    split_features["val"],
-                    split_features["test"],
-                )
-                baseline_val_logits = _constant_baseline_scores(target_matrices["train"], target_matrices["val"].size(0))
-                baseline_test_logits = _constant_baseline_scores(target_matrices["train"], target_matrices["test"].size(0))
-                results.append(
-                    {
-                        "family": family,
-                        "backbone": backbone_name,
-                        "seed": backbone_seed,
-                        "pool": pool_name,
-                        "probe_model": "baseline",
-                        "label_count": len(label_vocab),
-                        "train_rows": int(train_features.size(0)),
-                        "val_rows": int(val_features.size(0)),
-                        "test_rows": int(test_features.size(0)),
-                        **{f"val_{key}": value for key, value in _multilabel_metrics(baseline_val_logits, target_matrices["val"]).items()},
-                        **{f"test_{key}": value for key, value in _multilabel_metrics(baseline_test_logits, target_matrices["test"]).items()},
-                    }
-                )
-
-                for probe_model, train_limit in (("linear", None), ("mlp", 100000 if family == "mate" else 50000)):
-                    trained_model, val_metrics = _train_probe(
-                        model_kind=probe_model,
-                        train_features=train_features,
-                        train_targets=target_matrices["train"],
-                        val_features=val_features,
-                        val_targets=target_matrices["val"],
-                        seed=backbone_seed,
-                        max_train_rows=train_limit,
+                    train_features, val_features, test_features = _standardize_features(
+                        split_features["train"],
+                        split_features["val"],
+                        split_features["test"],
                     )
-                    test_metrics = _evaluate_probe(trained_model, test_features, target_matrices["test"])
+                    baseline_val_logits = _constant_baseline_scores(target_matrices["train"], target_matrices["val"].size(0))
+                    baseline_test_logits = _constant_baseline_scores(target_matrices["train"], target_matrices["test"].size(0))
                     results.append(
                         {
                             "family": family,
                             "backbone": backbone_name,
-                            "seed": backbone_seed,
+                            "seed": seed,
                             "pool": pool_name,
-                            "probe_model": probe_model,
+                            "probe_model": "baseline",
                             "label_count": len(label_vocab),
                             "train_rows": int(train_features.size(0)),
                             "val_rows": int(val_features.size(0)),
                             "test_rows": int(test_features.size(0)),
-                            **{f"val_{key}": value for key, value in val_metrics.items()},
-                            **{f"test_{key}": value for key, value in test_metrics.items()},
+                            **{f"val_{key}": value for key, value in _multilabel_metrics(baseline_val_logits, target_matrices["val"]).items()},
+                            **{f"test_{key}": value for key, value in _multilabel_metrics(baseline_test_logits, target_matrices["test"]).items()},
                         }
                     )
 
-    state_name = _decide_week6_state(results)
+                    for probe_model, train_limit in (("linear", None), ("mlp", 100000 if family == "mate" else 50000)):
+                        trained_model, val_metrics = _train_probe(
+                            model_kind=probe_model,
+                            train_features=train_features,
+                            train_targets=target_matrices["train"],
+                            val_features=val_features,
+                            val_targets=target_matrices["val"],
+                            seed=seed,
+                            max_train_rows=train_limit,
+                        )
+                        test_metrics = _evaluate_probe(trained_model, test_features, target_matrices["test"])
+                        results.append(
+                            {
+                                "family": family,
+                                "backbone": backbone_name,
+                                "seed": seed,
+                                "pool": pool_name,
+                                "probe_model": probe_model,
+                                "label_count": len(label_vocab),
+                                "train_rows": int(train_features.size(0)),
+                                "val_rows": int(val_features.size(0)),
+                                "test_rows": int(test_features.size(0)),
+                                **{f"val_{key}": value for key, value in val_metrics.items()},
+                                **{f"test_{key}": value for key, value in test_metrics.items()},
+                            }
+                        )
+
+    aggregate_rows = _aggregate_rows(results)
+    state_name = _decide_week7_state(aggregate_rows)
     output_payload = {
-        "week6_state": state_name,
+        "week7_state_candidate": state_name,
         "results": results,
+        "aggregate": aggregate_rows,
     }
     json_path = output_root / "probe_results.json"
     csv_path = output_root / "probe_results.csv"
+    aggregate_csv_path = output_root / "probe_results_aggregate.csv"
     summary_path = output_root / "readiness_probe_summary.md"
     json_path.write_text(json.dumps(output_payload, indent=2), encoding="utf-8")
     _write_csv(csv_path, results)
-    summary_path.write_text(_summary_markdown(state_name, results), encoding="utf-8")
+    _write_csv(aggregate_csv_path, aggregate_rows)
+    summary_path.write_text(_summary_markdown(state_name, results, aggregate_rows), encoding="utf-8")
     return {
         "json_path": str(json_path),
         "csv_path": str(csv_path),
+        "aggregate_csv_path": str(aggregate_csv_path),
         "summary_path": str(summary_path),
-        "week6_state": state_name,
+        "week7_state_candidate": state_name,
         "results": results,
+        "aggregate": aggregate_rows,
     }
