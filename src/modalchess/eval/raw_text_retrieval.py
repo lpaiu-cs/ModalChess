@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import csv
 import json
 import math
@@ -13,6 +14,8 @@ from typing import Any
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
+
+from modalchess.data.comment_source_audit import derive_comment_source_family
 
 
 STOPWORDS = {
@@ -262,12 +265,18 @@ def _train_text_probe(
     return model.cpu(), best_val_alignment
 
 
-def _chunked_retrieval_metrics(query_vectors: torch.Tensor, key_vectors: torch.Tensor, chunk_size: int = 256) -> tuple[float, float, float]:
+def _chunked_retrieval_metrics(
+    query_vectors: torch.Tensor,
+    key_vectors: torch.Tensor,
+    chunk_size: int = 256,
+    target_indices: torch.Tensor | None = None,
+) -> tuple[float, float, float]:
     return _chunked_retrieval_metrics_with_ties(
         query_vectors,
         key_vectors,
         chunk_size=chunk_size,
         tie_mode="optimistic",
+        target_indices=target_indices,
     )
 
 
@@ -279,19 +288,26 @@ def _chunked_retrieval_metrics_with_ties(
     tie_mode: str = "optimistic",
     atol: float = 1e-6,
     rtol: float = 1e-6,
+    target_indices: torch.Tensor | None = None,
 ) -> tuple[float, float, float]:
     if query_vectors.numel() == 0 or key_vectors.numel() == 0:
         return 0.0, 0.0, 0.0
     total = query_vectors.size(0)
+    if target_indices is None:
+        target_indices = torch.arange(total, dtype=torch.long)
+    else:
+        target_indices = target_indices.to(dtype=torch.long)
+        if target_indices.numel() != total:
+            raise ValueError("target_indices 길이가 query_vectors와 일치해야 한다.")
     recall_at_1 = 0.0
     recall_at_5 = 0.0
     reciprocal_rank_sum = 0.0
     for start in range(0, total, chunk_size):
         query_chunk = query_vectors[start : start + chunk_size]
         scores = query_chunk @ key_vectors.transpose(0, 1)
-        diagonal_indices = torch.arange(start, min(start + chunk_size, total), dtype=torch.long)
-        local_indices = torch.arange(diagonal_indices.numel(), dtype=torch.long)
-        target_scores = scores[local_indices, diagonal_indices]
+        target_chunk = target_indices[start : start + query_chunk.size(0)]
+        local_indices = torch.arange(target_chunk.numel(), dtype=torch.long)
+        target_scores = scores[local_indices, target_chunk]
         if tie_mode == "optimistic":
             ranks = (scores > target_scores.unsqueeze(1)).sum(dim=1) + 1
         elif tie_mode == "strict":
@@ -360,6 +376,55 @@ def _aggregate_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return aggregate_rows
 
 
+def _aggregate_breakdown_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (
+            str(row["family"]),
+            str(row["breakdown_kind"]),
+            str(row["breakdown_value"]),
+            str(row["backbone"]),
+            str(row["pool"]),
+            str(row["probe_model"]),
+        )
+        grouped.setdefault(key, []).append(row)
+    aggregate_rows: list[dict[str, Any]] = []
+    metric_names = (
+        "board_to_text_recall_at_1",
+        "board_to_text_recall_at_5",
+        "board_to_text_mrr",
+        "strict_board_to_text_recall_at_1",
+        "strict_board_to_text_recall_at_5",
+        "strict_board_to_text_mrr",
+        "text_to_board_recall_at_1",
+        "text_to_board_recall_at_5",
+        "text_to_board_mrr",
+        "strict_text_to_board_recall_at_1",
+        "strict_text_to_board_recall_at_5",
+        "strict_text_to_board_mrr",
+    )
+    for key in sorted(grouped):
+        family, breakdown_kind, breakdown_value, backbone, pool, probe_model = key
+        group_rows = sorted(grouped[key], key=lambda row: int(row["seed"]))
+        aggregate_row: dict[str, Any] = {
+            "family": family,
+            "breakdown_kind": breakdown_kind,
+            "breakdown_value": breakdown_value,
+            "backbone": backbone,
+            "pool": pool,
+            "probe_model": probe_model,
+            "seed_count": len(group_rows),
+            "seeds": [int(row["seed"]) for row in group_rows],
+            "test_rows_mean": statistics.fmean(float(row["test_rows"]) for row in group_rows),
+        }
+        for metric_name in metric_names:
+            values = [float(row[metric_name]) for row in group_rows]
+            aggregate_row[f"{metric_name}_mean"] = statistics.fmean(values)
+            aggregate_row[f"{metric_name}_std"] = statistics.stdev(values) if len(values) > 1 else 0.0
+        aggregate_rows.append(aggregate_row)
+    return aggregate_rows
+
+
 def _summary_markdown(aggregate_rows: list[dict[str, Any]], output_prefix: str) -> str:
     lines = ["# Raw-Text Retrieval Summary", ""]
     lines.append("- MATE uses real strategy/tactic text retrieval.")
@@ -393,6 +458,28 @@ def _summary_markdown(aggregate_rows: list[dict[str, Any]], output_prefix: str) 
             f"  random_baseline_approx: R@1={random_r1:.6f}, R@5={random_r5:.6f}"
         )
     return "\n".join(lines) + "\n"
+
+
+def _breakdown_markdown(rows: list[dict[str, Any]]) -> str:
+    lines = ["# Source Family Breakdown", ""]
+    for breakdown_kind in ("source_family", "comment_source"):
+        kind_rows = [row for row in rows if row["breakdown_kind"] == breakdown_kind]
+        if not kind_rows:
+            continue
+        lines.append(f"## {breakdown_kind}")
+        top_rows = sorted(
+            kind_rows,
+            key=lambda row: (-row["strict_board_to_text_mrr_mean"], -row["test_rows_mean"], row["breakdown_value"]),
+        )[:12]
+        for row in top_rows:
+            lines.append(
+                f"- `{row['breakdown_value']}` / backbone={row['backbone']} / pool={row['pool']} / probe={row['probe_model']}: "
+                f"strict_board_to_text_MRR={row['strict_board_to_text_mrr_mean']:.4f}, "
+                f"strict_text_to_board_MRR={row['strict_text_to_board_mrr_mean']:.4f}, "
+                f"test_rows_mean={row['test_rows_mean']:.1f}"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _align_rows_by_probe_id(
@@ -430,7 +517,23 @@ def _documents_for_family(
     return [
         _puzzle_synthetic_document(corpus_row, target_row)
         for corpus_row, target_row in zip(corpus_rows, target_rows, strict=True)
-    ]
+    ] 
+
+
+def _breakdown_index_groups(rows: list[dict[str, Any]]) -> dict[str, dict[str, list[int]]]:
+    groups = {
+        "source_family": defaultdict(list),
+        "comment_source": defaultdict(list),
+    }
+    for index, row in enumerate(rows):
+        source_family = str(row.get("source_family") or derive_comment_source_family(row))
+        comment_source = str(row.get("comment_source") or "unknown")
+        groups["source_family"][source_family].append(index)
+        groups["comment_source"][comment_source].append(index)
+    return {
+        kind: dict(values)
+        for kind, values in groups.items()
+    }
 
 
 def run_raw_text_retrieval_probes(
@@ -460,6 +563,7 @@ def run_raw_text_retrieval_probes(
     }
     active_families = families or ["mate", "puzzle"]
     results: list[dict[str, Any]] = []
+    breakdown_results: list[dict[str, Any]] = []
     for family in active_families:
         if family not in family_specs:
             raise ValueError(f"지원하지 않는 retrieval family: {family}")
@@ -504,6 +608,7 @@ def run_raw_text_retrieval_probes(
             split_name: [str(row["probe_id"]) for row in aligned_rows_by_split[split_name]]
             for split_name in ("train", "val", "test")
         }
+        breakdown_groups = _breakdown_index_groups(aligned_rows_by_split["test"]) if family == "annotated_sidecar" else {}
         for backbone_name in ("g1", "g3"):
             for seed in seed_list:
                 embedding_dir = embedding_root_path / backbone_name / f"seed{seed}"
@@ -580,6 +685,60 @@ def run_raw_text_retrieval_probes(
                                 "strict_text_to_board_mrr": strict_text_to_board[2],
                             }
                         )
+                        if family == "annotated_sidecar" and breakdown_groups:
+                            for breakdown_kind, groups in breakdown_groups.items():
+                                for breakdown_value, indices in groups.items():
+                                    if len(indices) < 10:
+                                        continue
+                                    index_tensor = torch.tensor(indices, dtype=torch.long)
+                                    sub_query_board = predicted_test.index_select(0, index_tensor)
+                                    sub_query_text = tfidf_by_split["test"].index_select(0, index_tensor)
+                                    sub_board_to_text = _chunked_retrieval_metrics(
+                                        sub_query_board,
+                                        tfidf_by_split["test"],
+                                        target_indices=index_tensor,
+                                    )
+                                    sub_text_to_board = _chunked_retrieval_metrics(
+                                        sub_query_text,
+                                        predicted_test,
+                                        target_indices=index_tensor,
+                                    )
+                                    strict_sub_board_to_text = _chunked_retrieval_metrics_with_ties(
+                                        sub_query_board,
+                                        tfidf_by_split["test"],
+                                        tie_mode="strict",
+                                        target_indices=index_tensor,
+                                    )
+                                    strict_sub_text_to_board = _chunked_retrieval_metrics_with_ties(
+                                        sub_query_text,
+                                        predicted_test,
+                                        tie_mode="strict",
+                                        target_indices=index_tensor,
+                                    )
+                                    breakdown_results.append(
+                                        {
+                                            "family": family,
+                                            "breakdown_kind": breakdown_kind,
+                                            "breakdown_value": breakdown_value,
+                                            "backbone": backbone_name,
+                                            "seed": seed,
+                                            "pool": pool_name,
+                                            "probe_model": probe_model,
+                                            "test_rows": int(index_tensor.numel()),
+                                            "board_to_text_recall_at_1": sub_board_to_text[0],
+                                            "board_to_text_recall_at_5": sub_board_to_text[1],
+                                            "board_to_text_mrr": sub_board_to_text[2],
+                                            "strict_board_to_text_recall_at_1": strict_sub_board_to_text[0],
+                                            "strict_board_to_text_recall_at_5": strict_sub_board_to_text[1],
+                                            "strict_board_to_text_mrr": strict_sub_board_to_text[2],
+                                            "text_to_board_recall_at_1": sub_text_to_board[0],
+                                            "text_to_board_recall_at_5": sub_text_to_board[1],
+                                            "text_to_board_mrr": sub_text_to_board[2],
+                                            "strict_text_to_board_recall_at_1": strict_sub_text_to_board[0],
+                                            "strict_text_to_board_recall_at_5": strict_sub_text_to_board[1],
+                                            "strict_text_to_board_mrr": strict_sub_text_to_board[2],
+                                        }
+                                    )
 
     aggregate_rows = _aggregate_results(results)
     json_path = output_root / f"{output_prefix}_results.json"
@@ -588,10 +747,26 @@ def run_raw_text_retrieval_probes(
     json_path.write_text(json.dumps({"results": results, "aggregate": aggregate_rows}, indent=2), encoding="utf-8")
     _write_csv(csv_path, results)
     summary_path.write_text(_summary_markdown(aggregate_rows, output_prefix), encoding="utf-8")
+    breakdown_json_path = None
+    breakdown_md_path = None
+    breakdown_payload = None
+    if breakdown_results:
+        breakdown_aggregate = _aggregate_breakdown_rows(breakdown_results)
+        breakdown_payload = {
+            "results": breakdown_results,
+            "aggregate": breakdown_aggregate,
+        }
+        breakdown_json_path = output_root / "source_family_breakdown.json"
+        breakdown_md_path = output_root / "source_family_breakdown.md"
+        breakdown_json_path.write_text(json.dumps(breakdown_payload, indent=2), encoding="utf-8")
+        breakdown_md_path.write_text(_breakdown_markdown(breakdown_aggregate), encoding="utf-8")
     return {
         "json_path": str(json_path),
         "csv_path": str(csv_path),
         "summary_path": str(summary_path),
         "results": results,
         "aggregate": aggregate_rows,
+        "breakdown_json_path": str(breakdown_json_path) if breakdown_json_path is not None else None,
+        "breakdown_md_path": str(breakdown_md_path) if breakdown_md_path is not None else None,
+        "breakdown": breakdown_payload,
     }

@@ -115,6 +115,15 @@ def _comment_source_proportions(rows: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
+def _source_family_proportions(rows: list[dict[str, Any]]) -> dict[str, float]:
+    counter: Counter[str] = Counter(str(row.get("source_family") or "unknown") for row in rows)
+    total = sum(counter.values())
+    return {
+        key: (count / total) if total else 0.0
+        for key, count in sorted(counter.items())
+    }
+
+
 def build_dedup_comment_eval(
     *,
     input_root: str | Path = "data/pilot/annotated_sidecar_v1",
@@ -135,6 +144,16 @@ def build_dedup_comment_eval(
     rows_by_split = _load_rows_by_split(input_path)
     variant_names = ["exact_comment_dedup", "normalized_comment_dedup", "capped_duplicates"]
     variant_summaries: dict[str, Any] = {}
+    filtering_manifest_path = None
+    filtering_mode = None
+    for candidate_name in ("informative_sidecar_manifest.yaml", "clean_sidecar_manifest.yaml", "multisource_sidecar_manifest.yaml"):
+        candidate_path = input_path / "manifests" / candidate_name
+        if candidate_path.exists():
+            filtering_manifest_path = str(candidate_path)
+            manifest_payload = yaml.safe_load(candidate_path.read_text(encoding="utf-8")) or {}
+            if isinstance(manifest_payload, dict):
+                filtering_mode = manifest_payload.get("primary_variant")
+            break
 
     for variant_name in variant_names:
         variant_root = variants_dir / variant_name
@@ -144,6 +163,7 @@ def build_dedup_comment_eval(
         split_counts: dict[str, int] = {}
         before_counts: dict[str, int] = {}
         source_props: dict[str, dict[str, float]] = {}
+        source_family_props: dict[str, dict[str, float]] = {}
 
         for split_name, split_rows in rows_by_split.items():
             before_counts[split_name] = len(split_rows)
@@ -157,6 +177,7 @@ def build_dedup_comment_eval(
             split_counts[split_name] = write_jsonl(variant_root / f"{split_name}.jsonl", selected_rows)
             cluster_map_records.extend(cluster_records)
             source_props[split_name] = _comment_source_proportions(selected_rows)
+            source_family_props[split_name] = _source_family_proportions(selected_rows)
 
         write_jsonl(cluster_map_path, cluster_map_records)
         variant_summaries[variant_name] = {
@@ -169,6 +190,7 @@ def build_dedup_comment_eval(
             "cluster_count": len(cluster_map_records),
             "multi_member_cluster_count": sum(int(record["cluster_size"] > 1) for record in cluster_map_records),
             "comment_source_proportions_by_split": source_props,
+            "source_family_proportions_by_split": source_family_props,
             "dedup_rule": (
                 "cluster by comment_source + exact comment_text"
                 if variant_name == "exact_comment_dedup"
@@ -194,6 +216,8 @@ def build_dedup_comment_eval(
         "input_root": str(input_path),
         "primary_variant": dedup_config.primary_variant,
         "config": asdict(dedup_config),
+        "filtering_manifest_path": filtering_manifest_path,
+        "filtering_mode": filtering_mode,
         "variants": variant_summaries,
         "outputs": {
             split_name: str(output_path / f"{split_name}.jsonl")
@@ -263,6 +287,8 @@ def build_comment_retrieval_eval_regime_v2(
     manifest["dedup_mode"] = dedup_manifest.get("primary_variant")
     manifest["subset_mode"] = manifest.get("evaluation_mode")
     manifest["source_input_root"] = dedup_manifest.get("input_root")
+    manifest["filtering_manifest_path"] = dedup_manifest.get("filtering_manifest_path")
+    manifest["filtering_mode"] = dedup_manifest.get("filtering_mode")
     write_yaml(manifest_path, manifest)
     result["manifest"] = manifest
     return result

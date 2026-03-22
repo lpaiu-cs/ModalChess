@@ -117,6 +117,9 @@ def build_comment_retrieval_eval_regime(
             stratum = _row_stratum(row, eval_config.stratify_by)
             stratum_rows.setdefault(stratum, []).append(row)
         full_counts = {stratum: len(stratum_rows[stratum]) for stratum in sorted(stratum_rows)}
+        full_source_family_counts = dict(
+            Counter(str(row.get("source_family") or "unknown") for row in eligible_rows).most_common()
+        )
         quotas = _allocate_quotas(full_counts, limits[split_name])
 
         selected_rows: list[dict[str, Any]] = []
@@ -132,6 +135,9 @@ def build_comment_retrieval_eval_regime(
         selected_rows.sort(
             key=lambda row: _hash_key(f"{eval_config.salt}:{split_name}:{row.get('probe_id') or row.get('sidecar_id')}")
         )
+        subset_source_family_counts = dict(
+            Counter(str(row.get("source_family") or "unknown") for row in selected_rows).most_common()
+        )
 
         output_path = subset_dir / f"annotated_sidecar_{split_name}.jsonl"
         write_jsonl(output_path, selected_rows)
@@ -142,6 +148,8 @@ def build_comment_retrieval_eval_regime(
             "stratify_by": eval_config.stratify_by,
             "full_stratum_counts": full_counts,
             "subset_stratum_counts": dict(subset_counts),
+            "full_source_family_counts": full_source_family_counts,
+            "subset_source_family_counts": subset_source_family_counts,
             "quotas": quotas,
             "output_path": str(output_path),
         }
