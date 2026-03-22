@@ -263,6 +263,23 @@ def _train_text_probe(
 
 
 def _chunked_retrieval_metrics(query_vectors: torch.Tensor, key_vectors: torch.Tensor, chunk_size: int = 256) -> tuple[float, float, float]:
+    return _chunked_retrieval_metrics_with_ties(
+        query_vectors,
+        key_vectors,
+        chunk_size=chunk_size,
+        tie_mode="optimistic",
+    )
+
+
+def _chunked_retrieval_metrics_with_ties(
+    query_vectors: torch.Tensor,
+    key_vectors: torch.Tensor,
+    *,
+    chunk_size: int = 256,
+    tie_mode: str = "optimistic",
+    atol: float = 1e-6,
+    rtol: float = 1e-6,
+) -> tuple[float, float, float]:
     if query_vectors.numel() == 0 or key_vectors.numel() == 0:
         return 0.0, 0.0, 0.0
     total = query_vectors.size(0)
@@ -275,7 +292,13 @@ def _chunked_retrieval_metrics(query_vectors: torch.Tensor, key_vectors: torch.T
         diagonal_indices = torch.arange(start, min(start + chunk_size, total), dtype=torch.long)
         local_indices = torch.arange(diagonal_indices.numel(), dtype=torch.long)
         target_scores = scores[local_indices, diagonal_indices]
-        ranks = (scores > target_scores.unsqueeze(1)).sum(dim=1) + 1
+        if tie_mode == "optimistic":
+            ranks = (scores > target_scores.unsqueeze(1)).sum(dim=1) + 1
+        elif tie_mode == "strict":
+            tie_mask = torch.isclose(scores, target_scores.unsqueeze(1), atol=atol, rtol=rtol)
+            ranks = (scores > target_scores.unsqueeze(1)).sum(dim=1) + tie_mask.sum(dim=1)
+        else:
+            raise ValueError(f"unsupported tie_mode: {tie_mode}")
         recall_at_1 += float((ranks == 1).sum().item())
         recall_at_5 += float((ranks <= 5).sum().item())
         reciprocal_rank_sum += float((1.0 / ranks.float()).sum().item())
@@ -304,9 +327,15 @@ def _aggregate_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "board_to_text_recall_at_1",
         "board_to_text_recall_at_5",
         "board_to_text_mrr",
+        "strict_board_to_text_recall_at_1",
+        "strict_board_to_text_recall_at_5",
+        "strict_board_to_text_mrr",
         "text_to_board_recall_at_1",
         "text_to_board_recall_at_5",
         "text_to_board_mrr",
+        "strict_text_to_board_recall_at_1",
+        "strict_text_to_board_recall_at_5",
+        "strict_text_to_board_mrr",
         "val_alignment",
     )
     for key in sorted(grouped):
@@ -354,6 +383,12 @@ def _summary_markdown(aggregate_rows: list[dict[str, Any]], output_prefix: str) 
             f"R@5={best_row['board_to_text_recall_at_5_mean']:.4f} +/- {best_row['board_to_text_recall_at_5_std']:.4f}, "
             f"MRR={best_row['board_to_text_mrr_mean']:.4f} +/- {best_row['board_to_text_mrr_std']:.4f}"
         )
+        if "strict_board_to_text_mrr_mean" in best_row:
+            lines.append(
+                f"  strict_tie_aware: R@1={best_row['strict_board_to_text_recall_at_1_mean']:.4f}, "
+                f"R@5={best_row['strict_board_to_text_recall_at_5_mean']:.4f}, "
+                f"MRR={best_row['strict_board_to_text_mrr_mean']:.4f}"
+            )
         lines.append(
             f"  random_baseline_approx: R@1={random_r1:.6f}, R@5={random_r5:.6f}"
         )
@@ -510,6 +545,16 @@ def run_raw_text_retrieval_probes(
                             predicted_test = _normalize_rows(model(test_features))
                         board_to_text = _chunked_retrieval_metrics(predicted_test, tfidf_by_split["test"])
                         text_to_board = _chunked_retrieval_metrics(tfidf_by_split["test"], predicted_test)
+                        strict_board_to_text = _chunked_retrieval_metrics_with_ties(
+                            predicted_test,
+                            tfidf_by_split["test"],
+                            tie_mode="strict",
+                        )
+                        strict_text_to_board = _chunked_retrieval_metrics_with_ties(
+                            tfidf_by_split["test"],
+                            predicted_test,
+                            tie_mode="strict",
+                        )
                         results.append(
                             {
                                 "family": family,
@@ -524,9 +569,15 @@ def run_raw_text_retrieval_probes(
                                 "board_to_text_recall_at_1": board_to_text[0],
                                 "board_to_text_recall_at_5": board_to_text[1],
                                 "board_to_text_mrr": board_to_text[2],
+                                "strict_board_to_text_recall_at_1": strict_board_to_text[0],
+                                "strict_board_to_text_recall_at_5": strict_board_to_text[1],
+                                "strict_board_to_text_mrr": strict_board_to_text[2],
                                 "text_to_board_recall_at_1": text_to_board[0],
                                 "text_to_board_recall_at_5": text_to_board[1],
                                 "text_to_board_mrr": text_to_board[2],
+                                "strict_text_to_board_recall_at_1": strict_text_to_board[0],
+                                "strict_text_to_board_recall_at_5": strict_text_to_board[1],
+                                "strict_text_to_board_mrr": strict_text_to_board[2],
                             }
                         )
 
