@@ -16,4 +16,6 @@ data/pilot/language_probe_v4_fix/
 data/pilot/annotated_sidecar_v1/
 data/pilot/annotated_sidecar_eval_v2/
 data/pilot/annotated_sidecar_v2_clean/
+data/pilot/annotated_sidecar_v3_informative/
 data/pilot/annotated_sidecar_eval_v3/
+data/pilot/annotated_sidecar_eval_v4/
