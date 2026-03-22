@@ -546,6 +546,7 @@ def run_raw_text_retrieval_probes(
     puzzle_min_df: int = 25,
     max_vocab_size: int = 256,
     families: list[str] | None = None,
+    probe_models: list[str] | None = None,
     output_prefix: str = "raw_text_retrieval",
 ) -> dict[str, Any]:
     """Run raw-text/synthetic-tag retrieval probes on frozen embeddings."""
@@ -562,6 +563,7 @@ def run_raw_text_retrieval_probes(
         "annotated_sidecar": {"min_df": mate_min_df, "text_side_kind": "raw_move_comment_text"},
     }
     active_families = families or ["mate", "puzzle"]
+    active_probe_models = probe_models or ["linear", "mlp"]
     results: list[dict[str, Any]] = []
     breakdown_results: list[dict[str, Any]] = []
     for family in active_families:
@@ -632,10 +634,13 @@ def run_raw_text_retrieval_probes(
                         split_features["val"],
                         split_features["test"],
                     )
-                    for probe_model, train_limit in (
-                        ("linear", None),
-                        ("mlp", 100000 if family in {"mate", "aux_board_anchored"} else 50000),
-                    ):
+                    for probe_model in active_probe_models:
+                        if probe_model == "linear":
+                            train_limit = None
+                        elif probe_model == "mlp":
+                            train_limit = 100000 if family in {"mate", "aux_board_anchored"} else 50000
+                        else:
+                            raise ValueError(f"지원하지 않는 probe model: {probe_model}")
                         model, val_alignment = _train_text_probe(
                             model_kind=probe_model,
                             train_features=train_features,

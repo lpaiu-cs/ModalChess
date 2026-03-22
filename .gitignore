@@ -24,3 +24,4 @@ data/pilot/annotated_sidecar_v4_multisource/
 data/pilot/annotated_sidecar_v4_multisource_clean/
 data/pilot/annotated_sidecar_v4_multisource_informative/
 data/pilot/annotated_sidecar_eval_v5/
+data/pilot/annotated_sidecar_holdout_v1/

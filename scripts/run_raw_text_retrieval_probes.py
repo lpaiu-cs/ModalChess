@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mate-min-df", type=int, default=50)
     parser.add_argument("--puzzle-min-df", type=int, default=25)
     parser.add_argument("--max-vocab-size", type=int, default=256)
+    parser.add_argument("--probe-model", action="append", default=[])
     parser.add_argument("--output-prefix", default="raw_text_retrieval")
     return parser.parse_args()
 
@@ -40,6 +41,7 @@ def main() -> None:
         puzzle_min_df=args.puzzle_min_df,
         max_vocab_size=args.max_vocab_size,
         families=args.family or None,
+        probe_models=args.probe_model or None,
         output_prefix=args.output_prefix,
     )
     print(f"Wrote raw-text retrieval summary to {result['summary_path']}")
