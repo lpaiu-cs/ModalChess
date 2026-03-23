@@ -133,6 +133,8 @@ def _resolve_dataset_section(
             return base_dataset
         if base_dataset.get("source") == "jsonl":
             return deep_merge_dict(base_dataset, {"split": fallback_split})
+        if fallback_split == "train":
+            return base_dataset
         return None
     return config.get("dataset")
 
@@ -169,9 +171,11 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     model_config = resolve_model_config(config)
     concept_vocab = model_config.get("concept_vocab", [])
     fen_max_length = model_config.get("max_fen_length")
-    train_dataset_section = _resolve_dataset_section(config, "train_dataset")
-    if train_dataset_section is None:
-        train_dataset_section = _resolve_dataset_section(config, "dataset")
+    train_dataset_section = _resolve_dataset_section(
+        config,
+        "train_dataset",
+        fallback_split="train",
+    )
     if train_dataset_section is None:
         raise ValueError("학습에는 dataset 또는 train_dataset 설정이 필요하다.")
     train_dataset_config = DatasetBuildConfig(**train_dataset_section)
@@ -337,7 +341,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     """학습용 CLI 인자를 파싱한다."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/train/default.yaml")
+    parser.add_argument("--config", default="configs/train/smoke_default.yaml")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--dataset-path", default=None)

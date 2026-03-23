@@ -21,11 +21,15 @@ ModalChess는 구조화된 공간 체스 표현을 다루는 CUDA 대응 연구 
 
 ## 빠른 시작
 
+로컬 smoke 검증과 공식 연구용 backbone config는 분리되어 있습니다.
+
+### 로컬 smoke / 회귀 검증
+
 ```bash
 python -m pip install -e ".[dev]"
 pytest
-python -m modalchess.train.train_spatial_baseline --config configs/train/default.yaml
-python -m modalchess.eval.eval_baseline --config configs/eval/default.yaml --checkpoint outputs/train/best_model.pt
+python -m modalchess.train.train_spatial_baseline --config configs/train/smoke_default.yaml
+python -m modalchess.eval.eval_baseline --config configs/eval/default.yaml --checkpoint outputs/train_smoke/best_model.pt
 python -m modalchess.train.train_spatial_baseline --config configs/train/fen_baseline.yaml
 python -m modalchess.eval.eval_baseline --config configs/eval/fen_baseline.yaml --checkpoint outputs/train_fen/best_model.pt
 python -m modalchess.train.train_spatial_baseline --config configs/train/pilot_spatial.yaml
@@ -35,12 +39,24 @@ python -m modalchess.eval.eval_baseline --config configs/eval/pilot_fen.yaml --c
 python -m modalchess.eval.aggregate_week1 --input-root outputs/week1
 ```
 
+### 공식 supervised backbone config
+
+```bash
+python -m modalchess.train.train_spatial_baseline --config configs/train/week3_ground_state.yaml
+python -m modalchess.train.train_spatial_baseline --config configs/train/week3_ground_state_legality.yaml
+```
+
+- `configs/train/default.yaml`: pair scorer ON, legality/value/concept OFF인 local G1-aligned baseline
+- `configs/train/smoke_default.yaml`: 빠른 회귀 검증용 smoke config
+- `configs/train/week3_ground_state.yaml`: 연구용 G1
+- `configs/train/week3_ground_state_legality.yaml`: 연구용 G3 control
+
 ## 디렉터리 구성
 
-- `src/modalchess/data`: 스키마, 코덱, fixture, 데이터셋 빌더
+- `src/modalchess/data`: 스키마, 코덱, fixture, 데이터셋 빌더, source/sidecar/audit 파이프라인
 - `src/modalchess/models`: 보드 인코더, FEN baseline, 헤드, 코어 모델, 미래 확장용 스텁
 - `src/modalchess/train`: 손실 함수, 옵티마이저, 트레이너, 학습 엔트리포인트
-- `src/modalchess/eval`: 평가 지표, 리포트, 평가 엔트리포인트
+- `src/modalchess/eval`: 평가 지표, 리포트, eval-only retrieval/readiness 엔트리포인트
 - `src/modalchess/utils`: square 좌표, 디바이스/설정 유틸리티
 - `docs`: 아키텍처, 데이터 스키마, 실험 계획, ablation 문서
 
@@ -51,7 +67,9 @@ python -m modalchess.eval.aggregate_week1 --input-root outputs/week1
 
 JSONL 레코드는 최소한 `position_id`, `game_id`, `fen`을 포함해야 하며, 데이터셋 빌더는 `game_id` 기준으로 `train/val/test` split을 수행합니다. `split != all`인데 `game_id`가 없으면 기본적으로 에러를 내고, 정말 position-level split이 필요할 때만 `allow_position_level_split: true`를 명시적으로 켜야 합니다.
 
-레코드에 `split` 필드가 모든 샘플에 일관되게 존재하면, 데이터셋 빌더는 ratio split 대신 그 값을 그대로 사용합니다. 1주차 파일럿 설정은 이 explicit split 경로를 사용합니다.
+레코드에 `split` 필드가 모든 샘플에 일관되게 존재하면, 데이터셋 빌더는 ratio split 대신 그 값을 그대로 사용합니다. 이 explicit split 경로에서도 기본값은 여전히 game-level hygiene입니다. 즉, `allow_position_level_split: true`가 아닌 이상 같은 `game_id`가 train/val/test에 걸쳐 섞이면 에러를 냅니다. 1주차 파일럿 설정은 이 explicit split 경로를 사용합니다.
+
+학습 엔트리포인트에서 JSONL `dataset:`만 주면, base config를 그대로 train에 재사용하지 않습니다. train 쪽은 자동으로 `split: train`, validation 쪽은 `split: val`로 해석합니다. 전체 JSONL을 학습에 태우고 싶다면 `train_dataset:`을 별도로 명시하고 의도적으로 `split: all`을 적어야 합니다.
 
 `history_fens`를 제공하는 경우 마지막 항목은 반드시 현재 `fen`과 같아야 하며, 중간 전이도 합법적인 단일 수로 연결되는지 검증합니다. `legal_moves_uci`를 제공해도 학습에는 보드 기준으로 다시 계산한 합법 수를 사용하고, JSONL 값은 검증용으로만 다룹니다.
 

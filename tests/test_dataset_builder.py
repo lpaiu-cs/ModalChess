@@ -242,3 +242,48 @@ def test_jsonl_dataset_supports_explicit_split_field(tmp_path: Path) -> None:
 
     assert len(val_dataset.samples) == 1
     assert val_dataset.samples[0].position_id == "val_1"
+
+
+def test_jsonl_dataset_rejects_cross_split_game_ids_on_explicit_split(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "explicit_split_leak.jsonl"
+    records = [
+        {
+            "position_id": "train_1",
+            "game_id": "g1",
+            "split": "train",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "target_move_uci": "e2e4",
+        },
+        {
+            "position_id": "val_1",
+            "game_id": "g1",
+            "split": "val",
+            "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+            "target_move_uci": "a7a8q",
+        },
+    ]
+    with dataset_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+
+    with pytest.raises(ValueError, match="같은 game_id가 여러 split"):
+        build_dataset(
+            DatasetBuildConfig(
+                source="jsonl",
+                dataset_path=str(dataset_path),
+                split="train",
+                split_field="split",
+            )
+        )
+
+    dataset = build_dataset(
+        DatasetBuildConfig(
+            source="jsonl",
+            dataset_path=str(dataset_path),
+            split="train",
+            split_field="split",
+            allow_position_level_split=True,
+        )
+    )
+    assert len(dataset.samples) == 1
+    assert dataset.samples[0].position_id == "train_1"

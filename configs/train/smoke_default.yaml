@@ -1,5 +1,5 @@
 seed: 7
-output_dir: outputs/train
+output_dir: outputs/train_smoke
 model_config_paths:
   - configs/model/board_encoder.yaml
   - configs/model/heads.yaml
@@ -8,7 +8,7 @@ dataset:
   history_length: 1
   limit: null
 model:
-  use_pair_scorer: true
+  use_pair_scorer: false
 train:
   batch_size: 4
   epochs: 8
@@ -22,7 +22,7 @@ losses:
   policy_axis_ce: 1.0
   policy_listwise: 1.0
   state_probe: 1.0
-  legality: 0.0
+  legality: 0.25
   legality_pos_weight_cap: 64.0
-  value: 0.0
-  concept: 0.0
+  value: 0.1
+  concept: 0.1

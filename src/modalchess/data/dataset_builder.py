@@ -206,6 +206,49 @@ def _filter_records_by_split_field(
     return filtered
 
 
+def _validate_explicit_split_records(
+    records: list[dict[str, object]],
+    split_field: str,
+    config: DatasetBuildConfig,
+) -> None:
+    supported_splits = {"train", "val", "test"}
+    missing_game_ids: list[str] = []
+    game_id_to_splits: dict[str, set[str]] = {}
+    for record in records:
+        position_id = str(record.get("position_id", "<unknown>"))
+        if split_field not in record:
+            raise ValueError(f"{split_field} 필드가 누락된 JSONL 레코드가 있다: {position_id}")
+        record_split = record[split_field]
+        if record_split not in supported_splits:
+            raise ValueError(
+                f"{split_field} 값은 train/val/test 중 하나여야 한다: "
+                f"{position_id} / {record_split}"
+            )
+        if config.allow_position_level_split:
+            continue
+        game_id = record.get("game_id")
+        if game_id is None:
+            missing_game_ids.append(position_id)
+            continue
+        game_id_to_splits.setdefault(str(game_id), set()).add(str(record_split))
+    if missing_game_ids:
+        raise ValueError(
+            "explicit split hygiene에는 모든 샘플의 game_id가 필요하다. "
+            "position 단위 분할이 필요하면 allow_position_level_split=true를 명시해야 한다."
+        )
+    conflicting_game_ids = [
+        f"{game_id}({','.join(sorted(split_names))})"
+        for game_id, split_names in sorted(game_id_to_splits.items())
+        if len(split_names) > 1
+    ]
+    if conflicting_game_ids:
+        conflict_preview = ", ".join(conflicting_game_ids[:5])
+        raise ValueError(
+            "explicit split hygiene를 위반했다. 같은 game_id가 여러 split에 걸쳐 나타난다: "
+            f"{conflict_preview}"
+        )
+
+
 def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     """JSONL 기반 실제 연구 데이터 샘플을 생성한다."""
     if config.dataset_path is None:
@@ -214,6 +257,7 @@ def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     records = _load_jsonl_records(dataset_path)
     split_field = _resolve_split_field(records, config)
     if split_field is not None:
+        _validate_explicit_split_records(records, split_field, config)
         records = _filter_records_by_split_field(records, split_field, config.split)
     samples: list[PositionSample] = []
     for record in records:
