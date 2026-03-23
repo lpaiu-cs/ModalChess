@@ -435,7 +435,8 @@ move quality는 이제 두 층으로 나눠 본다.
 
 `best_model.pt`의 의미는 backward compatible하게 유지한다.
 
-- **best checkpoint = policy-best = lowest `val.target_move_nll`**
+- validation이 있는 run에서는 **best checkpoint = policy-best = lowest `val.target_move_nll`** 이다.
+- validation이 없는 run에서는 backward compatibility를 위해 마지막 epoch checkpoint를 `best_model.pt`로도 남긴다.
 
 하지만 이제 보고는 하나로 끝내지 않는다.
 
