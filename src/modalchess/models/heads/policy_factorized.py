@@ -48,16 +48,34 @@ def score_factorized_moves(
     legal_moves: Sequence[tuple[int, int, int]],
 ) -> torch.Tensor:
     """factorized baseline 공식을 사용해 합법 수의 점수를 계산한다."""
+    raw_scores = build_raw_action_scores(policy_outputs)
+    scores = []
+    for src_square, dst_square, promotion in legal_moves:
+        scores.append(raw_scores[src_square, dst_square, promotion])
+    if not scores:
+        return torch.empty(0, dtype=raw_scores.dtype, device=raw_scores.device)
+    return torch.stack(scores)
+
+
+def build_raw_action_scores(policy_outputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    """raw action-space 전체 [64, 64, 5] 점수 텐서를 구성한다."""
     src_logits = policy_outputs["src_logits"]
     dst_logits = policy_outputs["dst_logits"]
     promo_logits = policy_outputs["promo_logits"]
     pair_logits = policy_outputs.get("pair_logits")
-    scores = []
-    for src_square, dst_square, promotion in legal_moves:
-        score = src_logits[src_square] + dst_logits[dst_square] + promo_logits[promotion]
-        if pair_logits is not None:
-            score = score + pair_logits[src_square, dst_square]
-        scores.append(score)
-    if not scores:
-        return torch.empty(0, dtype=src_logits.dtype, device=src_logits.device)
-    return torch.stack(scores)
+    if src_logits.ndim != 1 or src_logits.size(0) != 64:
+        raise ValueError("src_logits는 [64] shape이어야 한다.")
+    if dst_logits.ndim != 1 or dst_logits.size(0) != 64:
+        raise ValueError("dst_logits는 [64] shape이어야 한다.")
+    if promo_logits.ndim != 1 or promo_logits.size(0) != 5:
+        raise ValueError("promo_logits는 [5] shape이어야 한다.")
+    scores = (
+        src_logits[:, None, None]
+        + dst_logits[None, :, None]
+        + promo_logits[None, None, :]
+    )
+    if pair_logits is not None:
+        if pair_logits.ndim != 2 or pair_logits.shape != (64, 64):
+            raise ValueError("pair_logits는 [64, 64] shape이어야 한다.")
+        scores = scores + pair_logits[:, :, None]
+    return scores

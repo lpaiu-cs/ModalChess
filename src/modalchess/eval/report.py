@@ -30,6 +30,7 @@ def write_report(metrics: dict[str, Any], output_dir: str | Path, name: str = "e
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / f"{name}.json"
     csv_path = output_dir / f"{name}.csv"
+    md_path = output_dir / f"{name}.md"
     json_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     flattened = flatten_metrics(metrics)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -37,7 +38,11 @@ def write_report(metrics: dict[str, Any], output_dir: str | Path, name: str = "e
         writer.writerow(["metric", "value"])
         for key, value in flattened.items():
             writer.writerow([key, value])
-    return {"json": str(json_path), "csv": str(csv_path)}
+    lines = [f"# {name}", ""]
+    for key, value in flattened.items():
+        lines.append(f"- `{key}`: `{value}`")
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"json": str(json_path), "csv": str(csv_path), "md": str(md_path)}
 
 
 def write_failure_dump(

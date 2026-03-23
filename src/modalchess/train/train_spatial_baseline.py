@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -27,6 +28,17 @@ from modalchess.utils.config import (
 )
 from modalchess.utils.device import resolve_device
 from modalchess.utils.seed import seed_everything
+
+
+POLICY_SELECTION_METRIC = "val.target_move_nll"
+GROUNDING_SELECTION_COMPONENTS = (
+    "occupied_square_accuracy",
+    "piece_macro_f1",
+    "legality_average_precision",
+)
+GROUNDING_SELECTION_METRIC = (
+    "mean(val.occupied_square_accuracy,val.piece_macro_f1,val.legality_average_precision)"
+)
 
 
 def resolve_model_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +175,84 @@ def _build_checkpoint_payload(
     }
 
 
+def _extract_grounding_components(val_metrics: dict[str, Any]) -> dict[str, float]:
+    missing = [metric_name for metric_name in GROUNDING_SELECTION_COMPONENTS if metric_name not in val_metrics]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(
+            "grounding-best selection에는 val metrics가 모두 필요하다. "
+            f"누락된 항목: {missing_text}"
+        )
+    return {
+        metric_name: float(val_metrics[metric_name])
+        for metric_name in GROUNDING_SELECTION_COMPONENTS
+    }
+
+
+def _compute_grounding_score(val_metrics: dict[str, Any]) -> float:
+    components = _extract_grounding_components(val_metrics)
+    return sum(components.values()) / len(components)
+
+
+def _pareto_epoch_payload(epoch_record: dict[str, Any]) -> dict[str, Any]:
+    val_metrics = epoch_record.get("val")
+    if val_metrics is None:
+        raise ValueError("Pareto summary에는 val metrics가 필요하다.")
+    components = _extract_grounding_components(val_metrics)
+    return {
+        "epoch": int(epoch_record["epoch"]),
+        "target_move_nll": float(val_metrics["target_move_nll"]),
+        **components,
+        "grounding_score": sum(components.values()) / len(components),
+    }
+
+
+def _is_pareto_dominated(candidate: dict[str, Any], challenger: dict[str, Any]) -> bool:
+    not_worse = (
+        challenger["target_move_nll"] <= candidate["target_move_nll"]
+        and challenger["occupied_square_accuracy"] >= candidate["occupied_square_accuracy"]
+        and challenger["piece_macro_f1"] >= candidate["piece_macro_f1"]
+        and challenger["legality_average_precision"] >= candidate["legality_average_precision"]
+    )
+    strictly_better = (
+        challenger["target_move_nll"] < candidate["target_move_nll"]
+        or challenger["occupied_square_accuracy"] > candidate["occupied_square_accuracy"]
+        or challenger["piece_macro_f1"] > candidate["piece_macro_f1"]
+        or challenger["legality_average_precision"] > candidate["legality_average_precision"]
+    )
+    return not_worse and strictly_better
+
+
+def _compute_pareto_epochs(epoch_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    evaluated_epochs = [_pareto_epoch_payload(epoch_record) for epoch_record in epoch_metrics if "val" in epoch_record]
+    pareto_epochs: list[dict[str, Any]] = []
+    for candidate in evaluated_epochs:
+        if any(_is_pareto_dominated(candidate, challenger) for challenger in evaluated_epochs):
+            continue
+        pareto_epochs.append(candidate)
+    return sorted(pareto_epochs, key=lambda payload: payload["epoch"])
+
+
+def _write_selection_summary_csv(selection_rows: list[dict[str, Any]], csv_path: Path) -> None:
+    fieldnames = [
+        "epoch",
+        "has_val_metrics",
+        "target_move_nll",
+        "occupied_square_accuracy",
+        "piece_macro_f1",
+        "legality_average_precision",
+        "grounding_score",
+        "is_policy_best",
+        "is_grounding_best",
+        "is_pareto",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in selection_rows:
+            writer.writerow(row)
+
+
 def run_training(config: dict[str, Any]) -> dict[str, Any]:
     """베이스라인 학습을 실행하고 요약 지표를 반환한다."""
     seed = int(config.get("seed", 7))
@@ -223,15 +313,25 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     write_yaml_config(output_dir / "resolved_model_config.yaml", model_config)
 
     git_hash = resolve_git_hash()
-    selection_metric = "val.target_move_nll"
-    best_selection_value = float("inf")
+    policy_selection_metric = POLICY_SELECTION_METRIC
+    grounding_selection_metric = GROUNDING_SELECTION_METRIC
+    best_policy_value = float("inf")
+    best_grounding_value = float("-inf")
     best_epoch: int | None = None
+    grounding_best_epoch: int | None = None
     best_metrics: dict[str, object] | None = None
     best_checkpoint_path = output_dir / "best_model.pt"
+    best_policy_checkpoint_path = output_dir / "best_policy_model.pt"
+    best_grounding_checkpoint_path = output_dir / "best_grounding_model.pt"
     last_checkpoint_path = output_dir / "last_model.pt"
+    selection_summary_json_path = output_dir / "selection_summary.json"
+    selection_summary_csv_path = output_dir / "selection_summary.csv"
+    pareto_epochs_path = output_dir / "pareto_epochs.json"
     epoch_metrics: list[dict[str, Any]] = []
     epochs = int(config["train"]["epochs"])
     validation_topk = list(config.get("metrics", {}).get("topk", [1, 3, 5]))
+    grounding_selection_enabled = val_dataloader is not None
+    best_grounding_metrics: dict[str, object] | None = None
 
     for epoch_index in range(epochs):
         train_metrics = trainer.train_epoch(train_dataloader)
@@ -247,25 +347,45 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
                 device=device,
             )
             epoch_record["val"] = val_metrics
-            current_selection = float(val_metrics["target_move_nll"])
-            if current_selection < best_selection_value:
-                best_selection_value = current_selection
+            current_policy_value = float(val_metrics["target_move_nll"])
+            if current_policy_value < best_policy_value:
+                best_policy_value = current_policy_value
                 best_epoch = epoch_index + 1
                 best_metrics = val_metrics
-                torch.save(
-                    _build_checkpoint_payload(
-                        trainer.model,
-                        optimizer,
-                        config,
-                        model_config,
-                        seed,
-                        git_hash,
-                        epoch_metrics + [epoch_record],
-                        selection_metric=selection_metric,
-                        best_epoch=best_epoch,
-                    ),
-                    best_checkpoint_path,
+                policy_payload = _build_checkpoint_payload(
+                    trainer.model,
+                    optimizer,
+                    config,
+                    model_config,
+                    seed,
+                    git_hash,
+                    epoch_metrics + [epoch_record],
+                    selection_metric=policy_selection_metric,
+                    best_epoch=best_epoch,
                 )
+                torch.save(policy_payload, best_checkpoint_path)
+                torch.save(policy_payload, best_policy_checkpoint_path)
+            if grounding_selection_enabled:
+                current_grounding_value = _compute_grounding_score(val_metrics)
+                epoch_record["grounding_score"] = current_grounding_value
+                if current_grounding_value > best_grounding_value:
+                    best_grounding_value = current_grounding_value
+                    grounding_best_epoch = epoch_index + 1
+                    best_grounding_metrics = val_metrics
+                    torch.save(
+                        _build_checkpoint_payload(
+                            trainer.model,
+                            optimizer,
+                            config,
+                            model_config,
+                            seed,
+                            git_hash,
+                            epoch_metrics + [epoch_record],
+                            selection_metric=grounding_selection_metric,
+                            best_epoch=grounding_best_epoch,
+                        ),
+                        best_grounding_checkpoint_path,
+                    )
         epoch_metrics.append(epoch_record)
 
     torch.save(
@@ -277,7 +397,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
             seed,
             git_hash,
             epoch_metrics,
-            selection_metric=selection_metric,
+            selection_metric=policy_selection_metric,
             best_epoch=best_epoch,
         ),
         last_checkpoint_path,
@@ -292,12 +412,78 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
                 seed,
                 git_hash,
                 epoch_metrics,
-                selection_metric=selection_metric,
+                selection_metric=policy_selection_metric,
                 best_epoch=epochs,
             ),
             best_checkpoint_path,
         )
+        torch.save(
+            _build_checkpoint_payload(
+                trainer.model,
+                optimizer,
+                config,
+                model_config,
+                seed,
+                git_hash,
+                epoch_metrics,
+                selection_metric=policy_selection_metric,
+                best_epoch=epochs,
+            ),
+            best_policy_checkpoint_path,
+        )
         best_epoch = epochs
+
+    if grounding_selection_enabled and not best_grounding_checkpoint_path.exists():
+        raise ValueError("grounding-best selection이 활성화됐지만 checkpoint를 만들지 못했다.")
+
+    pareto_epochs = _compute_pareto_epochs(epoch_metrics) if grounding_selection_enabled else []
+    pareto_epochs_path.write_text(json.dumps(pareto_epochs, indent=2), encoding="utf-8")
+    selection_rows: list[dict[str, Any]] = []
+    pareto_epoch_numbers = {payload["epoch"] for payload in pareto_epochs}
+    for epoch_record in epoch_metrics:
+        val_metrics = epoch_record.get("val")
+        row: dict[str, Any] = {
+            "epoch": int(epoch_record["epoch"]),
+            "has_val_metrics": val_metrics is not None,
+            "target_move_nll": "",
+            "occupied_square_accuracy": "",
+            "piece_macro_f1": "",
+            "legality_average_precision": "",
+            "grounding_score": "",
+            "is_policy_best": epoch_record["epoch"] == best_epoch,
+            "is_grounding_best": epoch_record["epoch"] == grounding_best_epoch,
+            "is_pareto": epoch_record["epoch"] in pareto_epoch_numbers,
+        }
+        if val_metrics is not None:
+            row.update(
+                {
+                    "target_move_nll": float(val_metrics["target_move_nll"]),
+                    "occupied_square_accuracy": float(val_metrics["occupied_square_accuracy"]),
+                    "piece_macro_f1": float(val_metrics["piece_macro_f1"]),
+                    "legality_average_precision": float(val_metrics["legality_average_precision"]),
+                    "grounding_score": float(
+                        epoch_record.get("grounding_score", _compute_grounding_score(val_metrics))
+                    ),
+                }
+            )
+        selection_rows.append(row)
+
+    selection_summary = {
+        "policy_selection_metric": policy_selection_metric,
+        "grounding_selection_metric": grounding_selection_metric,
+        "policy_best_epoch": best_epoch,
+        "grounding_best_epoch": grounding_best_epoch,
+        "policy_best_value": None if best_epoch is None or best_metrics is None else float(best_metrics["target_move_nll"]),
+        "grounding_score": None if grounding_best_epoch is None else float(best_grounding_value),
+        "pareto_epochs": pareto_epochs,
+        "epochs": selection_rows,
+        "policy_best_checkpoint_path": str(best_policy_checkpoint_path),
+        "grounding_best_checkpoint_path": (
+            str(best_grounding_checkpoint_path) if best_grounding_checkpoint_path.exists() else None
+        ),
+    }
+    selection_summary_json_path.write_text(json.dumps(selection_summary, indent=2), encoding="utf-8")
+    _write_selection_summary_csv(selection_rows, selection_summary_csv_path)
 
     overfit_metrics = None
     if config["train"].get("run_overfit", False) and int(config["train"].get("overfit_steps", 0)) > 0:
@@ -310,14 +496,28 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "best_checkpoint_path": str(best_checkpoint_path),
         "last_checkpoint_path": str(last_checkpoint_path),
         "checkpoint_path": str(best_checkpoint_path),
+        "best_policy_checkpoint_path": str(best_policy_checkpoint_path),
+        "best_grounding_checkpoint_path": (
+            str(best_grounding_checkpoint_path) if best_grounding_checkpoint_path.exists() else None
+        ),
         "best_epoch": best_epoch,
+        "policy_best_epoch": best_epoch,
+        "grounding_best_epoch": grounding_best_epoch,
         "best_val_metrics": best_metrics,
+        "best_grounding_val_metrics": best_grounding_metrics,
         "train_dataset_size": len(train_dataset),
         "val_dataset_size": len(val_dataset) if val_dataset is not None else 0,
         "seed": seed,
         "git_hash": git_hash,
         "model_type": model_type,
-        "selection_metric": selection_metric,
+        "selection_metric": policy_selection_metric,
+        "policy_selection_metric": policy_selection_metric,
+        "grounding_selection_metric": grounding_selection_metric,
+        "grounding_score": None if grounding_best_epoch is None else float(best_grounding_value),
+        "pareto_epochs": pareto_epochs,
+        "selection_summary_json": str(selection_summary_json_path),
+        "selection_summary_csv": str(selection_summary_csv_path),
+        "pareto_epochs_json": str(pareto_epochs_path),
         **parameter_counts,
     }
     (output_dir / "train_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
@@ -325,12 +525,25 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "seed": seed,
         "git_hash": git_hash,
         "model_type": model_type,
-        "selection_metric": selection_metric,
+        "selection_metric": policy_selection_metric,
+        "policy_best_epoch": best_epoch,
+        "grounding_best_epoch": grounding_best_epoch,
+        "policy_selection_metric": policy_selection_metric,
+        "grounding_selection_metric": grounding_selection_metric,
+        "grounding_score": None if grounding_best_epoch is None else float(best_grounding_value),
+        "pareto_epochs": [payload["epoch"] for payload in pareto_epochs],
         **parameter_counts,
         "best_checkpoint_path": str(best_checkpoint_path),
+        "best_policy_checkpoint_path": str(best_policy_checkpoint_path),
+        "best_grounding_checkpoint_path": (
+            str(best_grounding_checkpoint_path) if best_grounding_checkpoint_path.exists() else None
+        ),
         "last_checkpoint_path": str(last_checkpoint_path),
         "train_config_path": str(output_dir / "train_config.yaml"),
         "resolved_model_config_path": str(output_dir / "resolved_model_config.yaml"),
+        "selection_summary_json": str(selection_summary_json_path),
+        "selection_summary_csv": str(selection_summary_csv_path),
+        "pareto_epochs_json": str(pareto_epochs_path),
         "train_dataset_size": len(train_dataset),
         "val_dataset_size": len(val_dataset) if val_dataset is not None else 0,
     }

@@ -71,9 +71,16 @@ def test_eval_smoke_run(tmp_path: Path) -> None:
     assert "square_state_accuracy" in metrics
     assert "top_1_move_accuracy" in metrics
     assert "target_move_nll" in metrics
+    assert "illegal_top_1_rate" in metrics
+    assert "legal_mass" in metrics
+    assert "illegal_mass" in metrics
+    assert "raw_top_1_is_legal_rate" in metrics
+    assert "raw_target_move_nll" in metrics
+    assert "report_md" in metrics
     assert metrics["model_parameter_count"] == training_metrics["model_parameter_count"]
     assert Path(metrics["report_json"]).exists()
     assert Path(metrics["report_csv"]).exists()
+    assert Path(metrics["report_md"]).exists()
     assert Path(metrics["failure_dump_jsonl"]).exists()
 
 
@@ -193,5 +200,8 @@ def test_eval_supports_multi_split_jsonl_summary(tmp_path: Path) -> None:
     assert "val" in summary["splits"]
     assert "test" in summary["splits"]
     assert "val_target_move_nll" in summary
+    assert "val_illegal_top_1_rate" in summary
+    assert "test_legal_mass" in summary
     assert "test_top_1" in summary
     assert Path(summary["summary_json"]).exists()
+    assert Path(summary["summary_md"]).exists()

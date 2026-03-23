@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from modalchess.data.move_codec import uci_to_factorized
-from modalchess.models.heads.policy_factorized import score_factorized_moves
+from modalchess.models.heads.policy_factorized import build_raw_action_scores, score_factorized_moves
 
 
 BASE_SUBSET_FLAGS = {
@@ -60,6 +60,31 @@ def _prediction_matches_target(
     )
 
 
+def _move_tuple_to_flat_index(move_tuple: tuple[int, int, int]) -> int:
+    src_square, dst_square, promotion = move_tuple
+    return src_square * 64 * 5 + dst_square * 5 + promotion
+
+
+def _flat_index_to_move_tuple(flat_index: int) -> tuple[int, int, int]:
+    src_square, remainder = divmod(flat_index, 64 * 5)
+    dst_square, promotion = divmod(remainder, 5)
+    return src_square, dst_square, promotion
+
+
+def _prediction_payload_from_move_tuple(
+    move_tuple: tuple[int, int, int],
+    score: torch.Tensor,
+    rank: int,
+) -> dict[str, object]:
+    return {
+        "rank": rank,
+        "src_square": move_tuple[0],
+        "dst_square": move_tuple[1],
+        "promotion": move_tuple[2],
+        "score": float(score.detach().cpu()),
+    }
+
+
 def collect_move_prediction_rows(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, object],
@@ -82,6 +107,10 @@ def collect_move_prediction_rows(
         scores = score_factorized_moves(sample_outputs, legal_moves)
         ranking = torch.argsort(scores, descending=True)
         ranked_moves = [legal_moves[i] for i in ranking.tolist()]
+        raw_scores = build_raw_action_scores(sample_outputs)
+        flat_raw_scores = raw_scores.reshape(-1)
+        raw_probabilities = torch.softmax(flat_raw_scores, dim=0)
+        raw_ranking = torch.argsort(flat_raw_scores, descending=True)
         factorized_target = uci_to_factorized(target_move)
         target_tuple = (
             factorized_target.src_square,
@@ -89,16 +118,32 @@ def collect_move_prediction_rows(
             factorized_target.promotion,
         )
         target_index = legal_moves.index(target_tuple)
+        target_flat_index = _move_tuple_to_flat_index(target_tuple)
+        legal_flat_indices = [_move_tuple_to_flat_index(move_tuple) for move_tuple in legal_moves]
+        legal_flat_index_tensor = torch.tensor(
+            legal_flat_indices,
+            dtype=torch.long,
+            device=flat_raw_scores.device,
+        )
+        legal_flat_index_set = set(legal_flat_indices)
         top_predictions = []
         for rank_index, move_tuple in enumerate(ranked_moves[:max_topk]):
             top_predictions.append(
-                {
-                    "rank": rank_index + 1,
-                    "src_square": move_tuple[0],
-                    "dst_square": move_tuple[1],
-                    "promotion": move_tuple[2],
-                    "score": float(scores[ranking[rank_index]].detach().cpu()),
-                }
+                _prediction_payload_from_move_tuple(
+                    move_tuple,
+                    scores[ranking[rank_index]],
+                    rank=rank_index + 1,
+                )
+            )
+        raw_top_predictions = []
+        for rank_index, flat_index in enumerate(raw_ranking[:max_topk].tolist()):
+            move_tuple = _flat_index_to_move_tuple(flat_index)
+            raw_top_predictions.append(
+                _prediction_payload_from_move_tuple(
+                    move_tuple,
+                    flat_raw_scores[flat_index],
+                    rank=rank_index + 1,
+                )
             )
         target_payload = {
             "src_square": target_tuple[0],
@@ -113,6 +158,21 @@ def collect_move_prediction_rows(
             )
             for k in topk
         }
+        raw_topk_hits = {
+            f"is_correct_raw_top_{k}": any(
+                _prediction_matches_target(prediction, target_payload)
+                for prediction in raw_top_predictions[:k]
+            )
+            for k in topk
+        }
+        legal_mass = float(raw_probabilities.index_select(0, legal_flat_index_tensor).sum().detach().cpu())
+        raw_top_1_is_legal = _move_tuple_to_flat_index(
+            (
+                int(raw_top_predictions[0]["src_square"]),
+                int(raw_top_predictions[0]["dst_square"]),
+                int(raw_top_predictions[0]["promotion"]),
+            )
+        ) in legal_flat_index_set
         rows.append(
             {
                 "batch_index": index,
@@ -121,7 +181,9 @@ def collect_move_prediction_rows(
                 "target_move_uci": target_move,
                 "target_move": target_payload,
                 "predicted_top_1": top_predictions[0],
+                "raw_predicted_top_1": raw_top_predictions[0],
                 "top_predictions": top_predictions,
+                "raw_top_predictions": raw_top_predictions,
                 "is_correct_top_1": top_predictions[0]["src_square"] == target_tuple[0]
                 and top_predictions[0]["dst_square"] == target_tuple[1]
                 and top_predictions[0]["promotion"] == target_tuple[2],
@@ -131,12 +193,23 @@ def collect_move_prediction_rows(
                         torch.tensor([target_index], dtype=torch.long, device=scores.device),
                     ).detach().cpu()
                 ),
+                "raw_target_move_nll": float(
+                    F.cross_entropy(
+                        flat_raw_scores.unsqueeze(0),
+                        torch.tensor([target_flat_index], dtype=torch.long, device=flat_raw_scores.device),
+                    ).detach().cpu()
+                ),
+                "raw_top_1_is_legal": raw_top_1_is_legal,
+                "illegal_top_1": not raw_top_1_is_legal,
+                "legal_mass": legal_mass,
+                "illegal_mass": 1.0 - legal_mass,
                 "is_promotion": bool(batch["target_is_promotion"][index].item()),
                 "is_castling": bool(batch["target_is_castling"][index].item()),
                 "is_en_passant": bool(batch["target_is_en_passant"][index].item()),
                 "is_check_evasion": bool(batch["subset_check_evasion"][index].item()),
                 "concept_tags": list(batch.get("concept_tags", [])[index]),
                 **topk_hits,
+                **raw_topk_hits,
                 **theme_flags,
             }
         )
@@ -149,6 +222,19 @@ def summarize_move_prediction_rows(
 ) -> dict[str, object]:
     """샘플별 예측 행으로부터 최종 move-quality 지표를 계산한다."""
     correct = {k: 0 for k in topk}
+    raw_correct = {k: 0 for k in topk}
+    raw_field_names = {
+        "raw_target_move_nll",
+        "legal_mass",
+        "illegal_mass",
+        "raw_top_1_is_legal",
+        "illegal_top_1",
+        "raw_top_predictions",
+    }
+    raw_diagnostics_available = all(
+        all(field_name in row for field_name in raw_field_names)
+        for row in rows
+    )
     subset_flag_names = dict(BASE_SUBSET_FLAGS)
     subset_flag_names.update(
         {
@@ -163,12 +249,28 @@ def summarize_move_prediction_rows(
     subset_total = {name: 0 for name in subset_correct}
     subset_nll = {name: 0.0 for name in subset_correct}
     nll_total = 0.0
+    raw_nll_total = 0.0
+    legal_mass_total = 0.0
+    illegal_mass_total = 0.0
+    illegal_top_1_total = 0
+    raw_top_1_is_legal_total = 0
     for row in rows:
         target = row["target_move"]
         nll_total += float(row["target_move_nll"])
+        if raw_diagnostics_available:
+            raw_nll_total += float(row["raw_target_move_nll"])
+            legal_mass_total += float(row["legal_mass"])
+            illegal_mass_total += float(row["illegal_mass"])
+            illegal_top_1_total += int(bool(row["illegal_top_1"]))
+            raw_top_1_is_legal_total += int(bool(row["raw_top_1_is_legal"]))
         for k in topk:
             if any(_prediction_matches_target(prediction, target) for prediction in row["top_predictions"][:k]):
                 correct[k] += 1
+            if raw_diagnostics_available and any(
+                _prediction_matches_target(prediction, target)
+                for prediction in row["raw_top_predictions"][:k]
+            ):
+                raw_correct[k] += 1
         for subset_name, flag_name in subset_flag_names.items():
             if row[flag_name]:
                 subset_total[subset_name] += 1
@@ -182,6 +284,19 @@ def summarize_move_prediction_rows(
         metrics[f"top_{k}"] = accuracy
         metrics[f"top_{k}_move_accuracy"] = accuracy
     metrics["target_move_nll"] = nll_total / total if total else 0.0
+    if raw_diagnostics_available:
+        for k in topk:
+            raw_accuracy = float(raw_correct[k] / total) if total else 0.0
+            metrics[f"raw_top_{k}"] = raw_accuracy
+            metrics[f"raw_top_{k}_move_accuracy"] = raw_accuracy
+        metrics["raw_target_move_nll"] = raw_nll_total / total if total else 0.0
+        metrics["legal_mass"] = legal_mass_total / total if total else 0.0
+        metrics["illegal_mass"] = illegal_mass_total / total if total else 0.0
+        metrics["raw_top_1_is_legal_rate"] = raw_top_1_is_legal_total / total if total else 0.0
+        metrics["illegal_top_1_rate"] = illegal_top_1_total / total if total else 0.0
+        metrics["honesty_diagnostics_status"] = "exact"
+    else:
+        metrics["honesty_diagnostics_status"] = "skipped_missing_raw_fields"
     subset_metrics: dict[str, dict[str, float | int]] = {}
     for subset_name, subset_count in subset_total.items():
         subset_payload: dict[str, float | int] = {"count": subset_count}

@@ -57,9 +57,17 @@ def _build_summary_payload(
     for split_name, metrics in split_results.items():
         for metric_name in (
             "target_move_nll",
+            "raw_target_move_nll",
             "top_1",
             "top_3",
             "top_5",
+            "raw_top_1",
+            "raw_top_3",
+            "raw_top_5",
+            "illegal_top_1_rate",
+            "raw_top_1_is_legal_rate",
+            "legal_mass",
+            "illegal_mass",
             "occupied_square_accuracy",
             "piece_macro_f1",
             "legality_average_precision",
@@ -140,6 +148,7 @@ def run_evaluation(
         )
         metrics["report_json"] = report_paths["json"]
         metrics["report_csv"] = report_paths["csv"]
+        metrics["report_md"] = report_paths["md"]
         metrics["failure_dump_jsonl"] = failure_dump_path
         metrics["num_failures"] = len(failure_rows)
         metrics["num_samples"] = len(dataset)
@@ -156,6 +165,7 @@ def run_evaluation(
     summary_paths = write_report(summary, output_dir=output_dir, name="eval_summary")
     summary["summary_json"] = summary_paths["json"]
     summary["summary_csv"] = summary_paths["csv"]
+    summary["summary_md"] = summary_paths["md"]
     (output_dir / "run_metadata.json").write_text(
         json.dumps(
             {
