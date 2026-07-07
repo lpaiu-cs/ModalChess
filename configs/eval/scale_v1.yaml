@@ -1,0 +1,22 @@
+# scale_v1 공용 eval config — 체크포인트는 CLI --checkpoint로 지정, output-dir은 CLI로 override
+# model 구성을 비워 checkpoint의 resolved_model_config를 그대로 사용한다 (tier별 d_model 차이 안전)
+output_dir: outputs/scale_v1/eval
+datasets:
+  val:
+    source: jsonl
+    dataset_path: data/pilot/real_v2_scale/supervised_val.jsonl
+    split: all
+    history_length: 1
+    loading: lazy
+    validate_sample_rate: 0.01
+  test:
+    source: jsonl
+    dataset_path: data/pilot/real_v2_scale/supervised_test.jsonl
+    split: all
+    history_length: 1
+    loading: lazy
+    validate_sample_rate: 0.01
+model: {}
+metrics:
+  topk: [1, 3, 5]
+  batch_size: 1024

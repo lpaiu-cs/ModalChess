@@ -32,6 +32,7 @@ class PgnPilotBuildConfig:
     source_date: str | None = None
     standard_only: bool = True
     rated_only: bool = False
+    min_rating: int | None = None
     include_history: bool = True
     emit_legal_moves: bool = False
     min_game_plies: int = 1
@@ -75,6 +76,28 @@ def _is_rated_game(headers: dict[str, str]) -> bool:
         return True
     event = (headers.get("Event") or "").strip().lower()
     return "rated" in event
+
+
+def _parse_player_rating(headers: dict[str, str], header_name: str) -> int | None:
+    """Elo 헤더를 정수로 파싱한다. 없거나 숫자가 아니면 None."""
+    raw_value = (headers.get(header_name) or "").strip()
+    if not raw_value or raw_value == "?":
+        return None
+    try:
+        return int(raw_value)
+    except ValueError:
+        return None
+
+
+def _passes_min_rating(headers: dict[str, str], min_rating: int) -> tuple[bool, str | None]:
+    """양쪽 플레이어가 min_rating 이상인지 판정하고 탈락 사유를 함께 반환한다."""
+    white_rating = _parse_player_rating(headers, "WhiteElo")
+    black_rating = _parse_player_rating(headers, "BlackElo")
+    if white_rating is None or black_rating is None:
+        return False, "missing_rating"
+    if white_rating < min_rating or black_rating < min_rating:
+        return False, "below_min_rating"
+    return True, None
 
 
 def _resolve_game_split(headers: dict[str, str], game_id: str, config: PgnPilotBuildConfig) -> str:
@@ -189,6 +212,13 @@ def build_supervised_records_from_pgn(
                 if build_config.rated_only and not _is_rated_game(headers):
                     bump_drop("unrated_game")
                     continue
+                if build_config.min_rating is not None:
+                    rating_ok, rating_drop_reason = _passes_min_rating(
+                        headers, build_config.min_rating
+                    )
+                    if not rating_ok:
+                        bump_drop(rating_drop_reason or "below_min_rating")
+                        continue
 
                 moves = list(game.mainline_moves())
                 if len(moves) < build_config.min_game_plies:

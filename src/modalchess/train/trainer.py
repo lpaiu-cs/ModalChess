@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from itertools import cycle
+import time
 from typing import Any
 
 import torch
@@ -33,15 +34,21 @@ class Trainer:
         loss_weights: dict[str, float],
         device: torch.device | None = None,
         grad_clip_norm: float | None = None,
+        lr_scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
     ) -> None:
         self.device = device or resolve_device()
         self.model = model.to(self.device)
         self.optimizer = optimizer
         self.loss_weights = loss_weights
         self.grad_clip_norm = grad_clip_norm
+        self.lr_scheduler = lr_scheduler
         autocast_dtype = resolve_autocast_dtype(self.device)
         use_grad_scaler = self.device.type == "cuda" and autocast_dtype == torch.float16
         self.grad_scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
+
+    def current_learning_rate(self) -> float:
+        """현재 optimizer의 대표 learning rate를 반환한다."""
+        return float(self.optimizer.param_groups[0]["lr"])
 
     def train_step(self, batch: dict[str, Any]) -> dict[str, float]:
         """한 번의 최적화 스텝을 수행하고 스칼라 손실을 반환한다."""
@@ -68,18 +75,27 @@ class Trainer:
             if self.grad_clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
             self.optimizer.step()
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
         return {name: float(loss.detach().cpu()) for name, loss in losses.items()}
 
     def train_epoch(self, dataloader) -> dict[str, float]:
-        """한 epoch 동안 학습하고 평균 손실 지표를 계산한다."""
+        """한 epoch 동안 학습하고 평균 손실과 처리량 지표를 계산한다."""
         totals: dict[str, float] = defaultdict(float)
         count = 0
+        sample_count = 0
+        epoch_start = time.perf_counter()
         for batch in dataloader:
             step_losses = self.train_step(batch)
             for name, value in step_losses.items():
                 totals[name] += value
             count += 1
-        return {name: value / max(count, 1) for name, value in totals.items()}
+            sample_count += len(batch["position_ids"])
+        elapsed = max(time.perf_counter() - epoch_start, 1e-9)
+        metrics = {name: value / max(count, 1) for name, value in totals.items()}
+        metrics["samples_per_second"] = sample_count / elapsed
+        metrics["learning_rate"] = self.current_learning_rate()
+        return metrics
 
     def overfit(self, dataloader, num_steps: int) -> dict[str, float]:
         """반복되는 dataloader 위에서 소형 overfit 루프를 수행한다."""

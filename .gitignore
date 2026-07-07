@@ -28,3 +28,7 @@ data/pilot/annotated_sidecar_holdout_v1/
 data/pilot/annotated_sidecar_holdout_v2/
 data/pilot/annotated_sidecar_v5_balanced/
 data/pilot/annotated_sidecar_eval_v6/
+
+data/pilot/real_v2_scale/
+data/pilot/real_v2_holdout/
+data/pilot/real_v2_scale_r1800/
