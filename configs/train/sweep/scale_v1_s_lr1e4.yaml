@@ -1,5 +1,5 @@
 seed: 11
-output_dir: outputs/scale_v1/tier_l_g3/seed11
+output_dir: outputs/scale_v1/sweep/tier_s_lr1e4/seed11
 model_config_paths:
 - configs/model/board_encoder.yaml
 - configs/model/heads.yaml
@@ -17,15 +17,16 @@ val_dataset:
   history_length: 1
   loading: lazy
   validate_sample_rate: 0.01
+  limit: 50000
 model:
-  d_model: 512
-  num_layers: 12
+  d_model: 256
+  num_layers: 6
   num_heads: 8
   use_pair_scorer: true
 train:
-  batch_size: 256
-  eval_batch_size: 256
-  epochs: 20
+  batch_size: 512
+  eval_batch_size: 1024
+  epochs: 6
   learning_rate: 0.0001
   weight_decay: 0.01
   grad_clip_norm: 1.0
@@ -33,7 +34,7 @@ train:
     name: warmup_cosine
     warmup_ratio: 0.05
     min_lr_ratio: 0.05
-  early_stop_patience: 4
+  early_stop_patience: 6
   num_workers: 8
   pin_memory: true
   persistent_workers: true
@@ -50,7 +51,7 @@ losses:
   policy_axis_ce: 1.0
   policy_listwise: 1.0
   state_probe: 1.0
-  legality: 1.0
+  legality: 0.0
   legality_pos_weight_cap: 64.0
   value: 0.0
   concept: 0.0

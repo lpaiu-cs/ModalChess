@@ -1,9 +1,8 @@
-# scale_v1 Tier M: d384/8L G1 (policy+state) — D1(real_v2_scale) 스케일 사다리 2단
 seed: 11
 output_dir: outputs/scale_v1/tier_m_g1/seed11
 model_config_paths:
-  - configs/model/board_encoder.yaml
-  - configs/model/heads.yaml
+- configs/model/board_encoder.yaml
+- configs/model/heads.yaml
 train_dataset:
   source: jsonl
   dataset_path: data/pilot/real_v2_scale/supervised_train.jsonl
@@ -18,21 +17,22 @@ val_dataset:
   history_length: 1
   loading: lazy
   validate_sample_rate: 0.01
+  limit: 50000
 model:
   d_model: 384
   num_layers: 8
   num_heads: 8
   use_pair_scorer: true
 train:
-  batch_size: 512
-  eval_batch_size: 1024
+  batch_size: 256
+  eval_batch_size: 256
   epochs: 20
-  learning_rate: 0.001
+  learning_rate: 0.0001
   weight_decay: 0.01
   grad_clip_norm: 1.0
   lr_schedule:
     name: warmup_cosine
-    warmup_ratio: 0.03
+    warmup_ratio: 0.05
     min_lr_ratio: 0.05
   early_stop_patience: 4
   num_workers: 8
@@ -42,7 +42,10 @@ train:
   run_overfit: false
   overfit_steps: 0
 metrics:
-  topk: [1, 3, 5]
+  topk:
+  - 1
+  - 3
+  - 5
 losses:
   policy: 1.0
   policy_axis_ce: 1.0

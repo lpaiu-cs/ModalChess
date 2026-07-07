@@ -1,5 +1,5 @@
 seed: 11
-output_dir: outputs/scale_v1/tier_l_g3/seed11
+output_dir: outputs/scale_v1/ladder/tier_s256/seed11
 model_config_paths:
 - configs/model/board_encoder.yaml
 - configs/model/heads.yaml
@@ -17,9 +17,10 @@ val_dataset:
   history_length: 1
   loading: lazy
   validate_sample_rate: 0.01
+  limit: 50000
 model:
-  d_model: 512
-  num_layers: 12
+  d_model: 256
+  num_layers: 6
   num_heads: 8
   use_pair_scorer: true
 train:
@@ -50,7 +51,7 @@ losses:
   policy_axis_ce: 1.0
   policy_listwise: 1.0
   state_probe: 1.0
-  legality: 1.0
+  legality: 0.0
   legality_pos_weight_cap: 64.0
   value: 0.0
   concept: 0.0
