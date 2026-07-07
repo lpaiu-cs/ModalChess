@@ -197,6 +197,30 @@ def test_vectorized_listwise_loss_matches_loop_reference() -> None:
     )
 
 
+def test_vectorized_listwise_loss_computes_in_fp32_under_low_precision_inputs() -> None:
+    """bf16 입력이 들어와도 listwise 점수 합산은 fp32로 수행돼야 한다."""
+    from modalchess.train.losses import _listwise_policy_loss
+
+    dataset = build_dataset(
+        DatasetBuildConfig(source="jsonl", dataset_path=FIXTURE_PILOT_PATH, split="all")
+    )
+    samples = [dataset[i] for i in range(len(dataset))]
+    batch = collate_position_samples(samples, concept_vocab=["check"])
+    batch_size = len(samples)
+    generator = torch.Generator().manual_seed(3)
+    outputs_bf16 = {
+        "src_logits": torch.randn(batch_size, 64, generator=generator).bfloat16(),
+        "dst_logits": torch.randn(batch_size, 64, generator=generator).bfloat16(),
+        "promo_logits": torch.randn(batch_size, 5, generator=generator).bfloat16(),
+        "pair_logits": torch.randn(batch_size, 64, 64, generator=generator).bfloat16(),
+    }
+    loss = _listwise_policy_loss(outputs_bf16, batch)
+    assert loss.dtype == torch.float32
+    outputs_fp32 = {key: value.float() for key, value in outputs_bf16.items()}
+    loss_fp32 = _listwise_policy_loss(outputs_fp32, batch)
+    assert torch.allclose(loss, loss_fp32, atol=1e-6)
+
+
 def test_metrics_and_loss_survive_pin_memory_tuple_conversion() -> None:
     """torch의 pin_memory 재귀는 batch 내 tuple을 list로 바꾼다 — 소비처가 견뎌야 한다."""
     from modalchess.eval.metrics_move_quality import collect_move_prediction_rows

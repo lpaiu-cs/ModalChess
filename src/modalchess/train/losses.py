@@ -67,13 +67,15 @@ def _listwise_policy_loss(
     valid = (target_indices >= 0) & legal_mask.any(dim=1)
     if not bool(valid.any()):
         return outputs["src_logits"].sum() * 0.0
+    # 점수 합산은 fp32로 고정한다. pair 로짓은 listwise CE 외에 제약이 없어 크기가
+    # 자랄 수 있고, bf16 정밀도에서는 큰 로짓의 gather+add가 기울기를 오염시킨다.
     scores = (
-        outputs["src_logits"].gather(1, legal_src)
-        + outputs["dst_logits"].gather(1, legal_dst)
-        + outputs["promo_logits"].gather(1, legal_promo)
+        outputs["src_logits"].float().gather(1, legal_src)
+        + outputs["dst_logits"].float().gather(1, legal_dst)
+        + outputs["promo_logits"].float().gather(1, legal_promo)
     )
     if "pair_logits" in outputs:
-        pair_flat = outputs["pair_logits"].reshape(outputs["pair_logits"].shape[0], 64 * 64)
+        pair_flat = outputs["pair_logits"].float().reshape(outputs["pair_logits"].shape[0], 64 * 64)
         scores = scores + pair_flat.gather(1, legal_src * 64 + legal_dst)
     scores = scores.masked_fill(~legal_mask, float("-inf"))
     return F.cross_entropy(scores[valid], target_indices[valid])
