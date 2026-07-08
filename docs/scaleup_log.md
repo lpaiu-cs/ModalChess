@@ -81,3 +81,37 @@
 - 8/8 구성 전부 개선 — H1 방향 지지. 절대값은 여전히 낮음(미약 신호 단계).
 - 공식 Gate 2는 3-seed + G3 + week17/18 동결 comment regime + null control로 판정.
 - 인프라: retrieval probe에 --backbone 필터 추가 (부분 backbone 실행 지원).
+
+## 2026-07-09 — RAM 급증(error 1455) 진단 + 누수 방지
+
+### 사건
+- 공식 6런을 6-run 체인 cmd로 돌리던 중 g1 seed17에서 Windows `error code 1455`
+  (ERROR_COMMITMENT_LIMIT, "paging file too small") 발생 — DataLoader 워커의
+  `_share_filename_cpu_`에서 공유메모리 매핑 생성 실패. 메인은 죽은 워커를 기다리며
+  6시간 행(zombie). 이후 사용자 리부트.
+
+### 근본 원인 (3계층)
+1. **Python 코드: 누수 없음.** epoch_metrics/prediction_rows/checkpoint payload 전부
+   epoch 경계에서 해제되는 bounded 구조 (코드 감사 + 경험적 확증).
+2. **DataLoader (주 기여): persistent_workers=True + pin_memory=True.** 워커가 20 epoch
+   내내 생존하며 Windows 공유메모리 매핑을 해제 없이 유지, pinned 메모리가 non-pageable
+   commit을 추가.
+3. **시스템 취약점: commit limit 134GB** (RAM 126GB + 자동관리 페이지파일 ~8GB). 자동관리
+   페이지파일이 급증 시 늦게 성장 → 사용자의 동시 대용량 작업(python 39 proc)과 겹칠 때
+   commit 순간 초과.
+
+### 대책 (코드 in-band, 커밋 예정)
+- M 공식 config: `persistent_workers=False` (워커 epoch마다 teardown → 공유메모리 매 경계
+  강제 반환, 누적 원천 차단), `pin_memory=False` (non-pageable commit 제거),
+  `num_workers 8→4`, `prefetch 4→2` (in-flight 매핑 32→8).
+- **워커 수는 학습 결과 불변** (셔플 순서는 시드 고정, num_workers는 배치 조립 분담만).
+
+### 경험적 확증 (g1 seed17 재실행, 메모리 샘플러 30s 간격)
+- **우리 학습 트리 WorkingSet: 1.9 → 2.4GB, 3시간 평탄** — 누수 소멸 확인.
+- 시스템 commit 34~44% 진동은 전부 사용자 동시 작업 (우리 기여 2.4GB 고정).
+- 운영: 사용자 결정으로 동시 실행 유지 + 메모리 가드(우리트리>8GB 또는 commit>78%)로 감시.
+  페이지파일 확대는 보류 (코드 대책으로 충분 판정).
+
+### 공식 6런 방식 전환
+- 30h 체인 → **1런씩 분리 실행** (single_run.cmd <backbone> <seed>). 리부트/세션 종료 강건성.
+- 1/6 완료: G1 seed11 top-1 0.4752 / NLL 1.6711 (재현성 확인, honesty legal_mass 0.135).

@@ -35,10 +35,10 @@ train:
     warmup_ratio: 0.05
     min_lr_ratio: 0.05
   early_stop_patience: 4
-  num_workers: 8
-  pin_memory: true
-  persistent_workers: true
-  prefetch_factor: 4
+  num_workers: 4
+  pin_memory: false
+  persistent_workers: false
+  prefetch_factor: 2
   run_overfit: false
   overfit_steps: 0
 metrics:
