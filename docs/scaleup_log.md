@@ -72,3 +72,12 @@
 - S 대비 NLL 개선 0.93% (<2%) → **중단 규칙 발동, 모델 축 스케일업 종료. 병목은 데이터.**
 - 결정: D2 확장 전에 Gate 2(표현 전이)를 먼저 측정 — Gate 1은 이미 S/M 모두 초과.
 - 승자 tier = M. 공식 3-seed (G1+G3 × 11/17/23) 진행.
+
+### Gate 2 미리보기 (2026-07-08, ladder-M seed11 G1, week7 프로토콜/language_probe_v2)
+| MRR (구 백본 → 새 백본) | board→text | text→board |
+|---|---|---|
+| MATE (자연 텍스트) | 0.0005 → 0.0012 (~2.5×) | 0.0017 → 0.0057 (~3.3×) |
+| Puzzle (합성 태그) | 0.059 → 0.098 (~1.7×) | 0.015 → 0.033 (~2.2×) |
+- 8/8 구성 전부 개선 — H1 방향 지지. 절대값은 여전히 낮음(미약 신호 단계).
+- 공식 Gate 2는 3-seed + G3 + week17/18 동결 comment regime + null control로 판정.
+- 인프라: retrieval probe에 --backbone 필터 추가 (부분 backbone 실행 지원).

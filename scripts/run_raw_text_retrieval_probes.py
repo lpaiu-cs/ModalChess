@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-vocab-size", type=int, default=256)
     parser.add_argument("--probe-model", action="append", default=[])
     parser.add_argument("--output-prefix", default="raw_text_retrieval")
+    parser.add_argument("--backbone", action="append", default=[], help="제한할 backbone 이름 (기본 g1,g3)")
     return parser.parse_args()
 
 
@@ -43,6 +44,7 @@ def main() -> None:
         families=args.family or None,
         probe_models=args.probe_model or None,
         output_prefix=args.output_prefix,
+        backbones=args.backbone or None,
     )
     print(f"Wrote raw-text retrieval summary to {result['summary_path']}")
 
