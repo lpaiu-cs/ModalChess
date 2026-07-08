@@ -47,3 +47,22 @@
 ### 진행 중
 - 사다리: S256(d256, 20ep) → M(d384/8L, 20ep), bs256, val 50k — 완료 후 중단 규칙
   (개선 <2%면 상위 tier 중단) 적용해 L 투입 판단.
+
+## 2026-07-08 — bf16 발산 근본 원인 확정 + Tier S 재확립
+
+### listwise 발산의 근본 원인 (커밋 1fe7fec)
+- 증상: bs256/20ep에서 S·M 모두 ep3부터 listwise 손실만 폭발 (axis CE·state probe는
+  같은 인코더 위에서 계속 개선). LR이 감소하는 중에도 상승하는 비정형 패턴.
+- 원인: pair scorer 로짓은 listwise CE 외에 제약이 없어 크기가 자라고, bf16(가수
+  8bit)에서 큰 로짓의 gather+add 정밀도 손실이 기울기를 오염.
+- 수정: listwise 점수 합산 fp32 고정 (수학 불변).
+- 검증: 동일 seed 통제 비교 — bf16 ep6 NLL 6.25 폭발 vs **fp32 20ep 전 구간 단조
+  개선**. 어제 bs512/6ep 런이 깨끗했던 것은 빠른 cosine 감쇠가 임계 크기 도달 전
+  LR을 낮춘 우연.
+
+### Tier S 확정 (d256/6L 5.14M, bs256, lr1e-4, 20ep, D1)
+- **val top-1 0.4686 / top-5 0.8615 / NLL 1.6865** (best ep20, 여전히 개선 중)
+- Gate 1 목표(top-1 ≥ 0.42, NLL ≤ 2.1) — **Tier S에서 이미 초과 달성**
+- 기존 백본(531k/2ep) 대비 top-1 +15.1pt
+- honesty(G1): illegal_top1 0.769, legal_mass 0.041
+- 발산했던 bf16 런은 outputs/scale_v1/*_bf16diverged/로 보존
