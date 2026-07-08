@@ -66,3 +66,9 @@
 - 기존 백본(531k/2ep) 대비 top-1 +15.1pt
 - honesty(G1): illegal_top1 0.769, legal_mass 0.041
 - 발산했던 bf16 런은 outputs/scale_v1/*_bf16diverged/로 보존
+
+### 사다리 판정 (2026-07-08)
+- Tier M (d384/8L, 15.0M): **top-1 0.4747 / NLL 1.6709** (best ep15, early stop ep19)
+- S 대비 NLL 개선 0.93% (<2%) → **중단 규칙 발동, 모델 축 스케일업 종료. 병목은 데이터.**
+- 결정: D2 확장 전에 Gate 2(표현 전이)를 먼저 측정 — Gate 1은 이미 S/M 모두 초과.
+- 승자 tier = M. 공식 3-seed (G1+G3 × 11/17/23) 진행.

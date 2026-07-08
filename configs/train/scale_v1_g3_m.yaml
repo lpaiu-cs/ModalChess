@@ -1,5 +1,5 @@
 seed: 11
-output_dir: outputs/scale_v1/official/tier_m_g1/seed11
+output_dir: outputs/scale_v1/official/tier_m_g3/seed11
 model_config_paths:
 - configs/model/board_encoder.yaml
 - configs/model/heads.yaml
@@ -51,7 +51,7 @@ losses:
   policy_axis_ce: 1.0
   policy_listwise: 1.0
   state_probe: 1.0
-  legality: 0.0
+  legality: 1.0
   legality_pos_weight_cap: 64.0
   value: 0.0
   concept: 0.0
