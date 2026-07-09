@@ -34,23 +34,56 @@ from modalchess.eval.raw_text_retrieval import (  # noqa: E402
 )
 
 
-def _prepare(corpus_root: Path, family: str, min_df: int, max_vocab: int):
+def _aligned_docs(corpus_root: Path, family: str):
     rows = {sp: _load_jsonl(corpus_root / f"{family}_{sp}.jsonl") for sp in ("train", "val", "test")}
     targets = {
         sp: (_load_jsonl(corpus_root / f"{family}_targets_{sp}.jsonl")
              if (corpus_root / f"{family}_targets_{sp}.jsonl").exists() else None)
         for sp in ("train", "val", "test")
     }
-    aligned_rows, aligned_targets, probe_ids = {}, {}, {}
+    probe_ids, docs = {}, {}
     for sp in ("train", "val", "test"):
         ar, at = _align_rows_by_probe_id(rows[sp], targets[sp])
-        aligned_rows[sp] = ar
-        aligned_targets[sp] = at
         probe_ids[sp] = [str(r["probe_id"]) for r in ar]
-    docs = {sp: _documents_for_family(family, aligned_rows[sp], aligned_targets[sp]) for sp in ("train", "val", "test")}
+        docs[sp] = _documents_for_family(family, ar, at)
+    return probe_ids, docs
+
+
+def _tfidf_targets(docs, min_df, max_vocab):
     vocab, tok2idx, idf = _build_vocab(docs["train"], min_df=min_df, max_vocab_size=max_vocab)
-    tfidf = {sp: _normalize_rows(_tfidf_matrix(docs[sp], tok2idx, idf)) for sp in ("train", "val", "test")}
-    return probe_ids, tfidf
+    return {sp: _normalize_rows(_tfidf_matrix(docs[sp], tok2idx, idf)) for sp in ("train", "val", "test")}
+
+
+def _sentence_targets(docs, model_name: str, batch_size: int):
+    """문장 인코더(mean-pooled, normalized)로 텍스트 target 행렬을 만든다."""
+    from transformers import AutoModel, AutoTokenizer
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tok = AutoTokenizer.from_pretrained(model_name)
+    mdl = AutoModel.from_pretrained(model_name).eval().to(device)
+
+    def encode_all(texts: list[str]) -> torch.Tensor:
+        out = []
+        for start in range(0, len(texts), batch_size):
+            chunk = texts[start:start + batch_size]
+            enc = tok(chunk, padding=True, truncation=True, max_length=128, return_tensors="pt").to(device)
+            with torch.no_grad():
+                hidden = mdl(**enc).last_hidden_state
+            mask = enc["attention_mask"].unsqueeze(-1).float()
+            emb = (hidden * mask).sum(1) / mask.sum(1).clamp_min(1e-9)
+            out.append(torch.nn.functional.normalize(emb, dim=1).cpu())
+        return torch.cat(out, dim=0)
+
+    return {sp: encode_all(docs[sp]) for sp in ("train", "val", "test")}
+
+
+def _prepare(corpus_root: Path, family: str, args):
+    probe_ids, docs = _aligned_docs(corpus_root, family)
+    if args.text_side == "sentence":
+        targets = _sentence_targets(docs, args.sentence_model, args.sentence_batch)
+    else:
+        targets = _tfidf_targets(docs, args.min_df, args.max_vocab)
+    return probe_ids, targets
 
 
 def _features(embedding_dir: Path, family: str, pool: str, probe_ids: dict[str, list[str]]):
@@ -71,7 +104,7 @@ def _mrr_pair(predicted_test, tfidf_test):
 
 def run(args) -> None:
     corpus_root = Path(args.corpus_root)
-    probe_ids, tfidf = _prepare(corpus_root, args.family, args.min_df, args.max_vocab)
+    probe_ids, tfidf = _prepare(corpus_root, args.family, args)
     n_test = tfidf["test"].size(0)
     records = []
     for label, emb_root in (("old", Path(args.old_embedding_root)), ("new", Path(args.new_embedding_root))):
@@ -100,6 +133,7 @@ def run(args) -> None:
                     nb2t.append(sb2t); nt2b.append(st2b)
                 rec = {
                     "backbone_group": label, "backbone": bb, "seed": seed,
+                    "text_side": args.text_side,
                     "pool": args.pool, "probe_model": args.probe_model, "n_test": n_test,
                     "real_b2t_mrr": real_b2t, "real_t2b_mrr": real_t2b,
                     "real_b2t_r1": real_b2t_r1, "real_t2b_r1": real_t2b_r1,
@@ -126,6 +160,9 @@ def parse_args():
     p.add_argument("--probe-model", default="mlp")
     p.add_argument("--backbone", dest="backbones", action="append", default=[])
     p.add_argument("--seed", dest="seeds", type=int, action="append", default=[])
+    p.add_argument("--text-side", choices=("tfidf", "sentence"), default="tfidf")
+    p.add_argument("--sentence-model", default="sentence-transformers/all-MiniLM-L6-v2")
+    p.add_argument("--sentence-batch", type=int, default=256)
     p.add_argument("--min-df", type=int, default=25)
     p.add_argument("--max-vocab", type=int, default=512)
     p.add_argument("--null-repeats", type=int, default=50)

@@ -197,3 +197,32 @@
 - 바로 connector 학습으로 가기엔 절대 신호 부족. 최고가치 다음 실험 = **텍스트 축 교체(tf-idf →
   pretrained sentence encoder)**로 남은 병목이 텍스트 표현인지 검증. 상승하면 connector, 아니면
   board↔comment 정렬이 근본 한계.
+
+## 2026-07-10 — 옵션 B: 텍스트 축 교체 (tf-idf → 문장 인코더) 2×2 요인 실험
+
+### 방법
+- 텍스트 target을 tf-idf BoW → `sentence-transformers/all-MiniLM-L6-v2`(384-dim, transformers mean-pool,
+  normalized)로 교체. `scripts/gate2_null_control.py --text-side sentence`. probe·retrieval·permutation
+  null은 동일. comment regime(정렬 3000행), 2 pool × 3 seed × 2 backbone.
+
+### 결과 — text→board strict MRR (2×2 요인)
+| | tf-idf 텍스트 | 문장인코더 텍스트 | 텍스트축 상승 |
+|---|---|---|---|
+| 기존 백본 | 0.00559 | 0.00692 | 1.24× |
+| 새 백본 | 0.00743 | 0.01084 | 1.46× |
+| 백본 상승 | 1.33× | 1.57× | |
+
+기준선(기존 백본 + tf-idf = 0.00559)로부터 분해:
+- 백본 스케일만: 0.00743 (1.33×)
+- 텍스트축만: 0.00692 (1.24×)
+- 둘 다: **0.01084 (1.94× total)** — 두 축이 곱셈적으로 복합(1.33×1.46 ≈ 1.24×1.57 ≈ 1.94).
+- new+sentence: 12 config 전부 real(min 0.00945) > null max(0.00417), null mean 대비 3.82×.
+
+### 판정
+- **두 축(백본·텍스트)이 실재하고 대략 대등한 복합 병목**임을 요인 실험으로 확증. 어느 하나로도 불충분,
+  함께면 신호 거의 2배. new+sentence는 프로젝트 사상 가장 깨끗한 above-chance board↔comment 신호.
+- 정직 캐비엇: 절대 0.0108은 3000 후보 중 정답 ~90등 수준 — 여전히 usable retrieval(top-10) 미달.
+  board↔comment 정렬에 근본 상한 가능성.
+- **Gate 3 = GO(조건부)**: frozen-probe 0.0108은 학습형 connector의 하한. 두 축이 독립적으로 돕고
+  복합하므로, 양쪽을 공동 최적화하는 small contrastive connector가 더 밀어올릴 근거 충분. 착수 권고.
+  단 절대 정렬 상한을 조기 진단하는 체크포인트를 connector 초반에 둘 것.
