@@ -167,3 +167,33 @@
 ### 남은 공식 Gate 2 (미실행)
 - week17/18 동결 comment regime(annotated_sidecar_eval_v6/holdout_v2) + 정식 permutation null control로
   comment 텍스트에서의 판정. 본 language_probe_v2 결과는 보조 확증(자연텍스트=MATE, 합성태그=puzzle).
+
+## 2026-07-10 — 공식 Gate 2: comment regime + permutation null control
+
+### 방법
+- week17 고정 stratified subset(current_mixed_baseline/dedup, test 3000행)을 기존 임베딩 probe_id로
+  정렬 재현 → 새·기존 백본이 동일 probe_id에 정렬(apples-to-apples).
+- `scripts/gate2_null_control.py`: 동결 raw_text_retrieval probe 내부 함수 재사용, test 정렬을 50회
+  무작위 치환한 permutation null과 real strict MRR 비교. 2 pool × 3 seed × 2 backbone.
+
+### 결과 (comment regime, 12 config/그룹)
+| 방향 | OLD real | NEW real | new/old | new / null-mean |
+|---|---|---|---|---|
+| text→board | 0.00559 | 0.00743 | 1.33× | 2.63× |
+| board→text | 0.00317 | 0.00336 | 1.06× | 1.50× |
+
+- null mean ≈ 0.0028(t2b) / 0.0022(b2t), null max ≈ 0.0047(t2b) / 0.0029(b2t).
+- **NEW text→board: 12개 config 전부 real(min 0.00626) > null max(0.00472)** — 우연 아님 확정.
+- board→text는 양쪽 다 null 근접(marginal) — 실질 신호 거의 없음, 개선도 없음.
+
+### Gate 2 판정: 부분 통과 (H1 확증, 그러나 백본 단독 병목 아님)
+- ✓ 신호 진짜: permutation null을 명확히 상회(comment + language_probe 두 regime, text→board).
+- ✓ 새 백본이 기존 상회, 재현적: comment 1.33×, MATE/puzzle 2~3.7×.
+- ✗ 절대값 여전히 약함, board→text는 near-chance, comment 개선폭 modest.
+- 해석: 스케일업이 신호를 null 위로 밀어올려 H1(백본 병목) 확증. 그러나 텍스트 축(tf-idf BoW)과
+  board↔comment 정렬 난이도가 남은 상한 — 특히 board→text.
+
+### Gate 3 권고
+- 바로 connector 학습으로 가기엔 절대 신호 부족. 최고가치 다음 실험 = **텍스트 축 교체(tf-idf →
+  pretrained sentence encoder)**로 남은 병목이 텍스트 표현인지 검증. 상승하면 connector, 아니면
+  board↔comment 정렬이 근본 한계.
