@@ -115,3 +115,30 @@
 ### 공식 6런 방식 전환
 - 30h 체인 → **1런씩 분리 실행** (single_run.cmd <backbone> <seed>). 리부트/세션 종료 강건성.
 - 1/6 완료: G1 seed11 top-1 0.4752 / NLL 1.6711 (재현성 확인, honesty legal_mass 0.135).
+
+## 2026-07-10 — 공식 3-seed 완료 + Gate 1 통과 + worktree 삭제 복구
+
+### 공식 6런 결과 (Tier M d384/8L, bs256, lr1e-4, fp32 listwise, D1, workers4/non-persistent)
+| run | best ep | top-1 | top-5 | NLL | legality AP | legal_mass |
+|---|---|---|---|---|---|---|
+| G1 seed11 | 15/19 | 0.4752 | 0.8631 | 1.6711 | 0.0008 | 0.135 |
+| G1 seed17 | 13/17 | 0.4758 | 0.8643 | 1.6671 | 0.0327 | 0.077 |
+| G1 seed23 | 13/17 | 0.4728 | 0.8633 | 1.6724 | 0.0054 | 0.093 |
+| G3 seed11 | 16/20 | 0.4750 | 0.8643 | 1.6712 | 0.9917 | 0.082 |
+| G3 seed17 | 15/19 | 0.4748 | 0.8645 | 1.6714 | 0.9901 | 0.055 |
+| G3 seed23 | 14/18 | 0.4743 | 0.8642 | 1.6732 | 0.9915 | 0.075 |
+
+- **G1 평균: top-1 0.4746±0.0013, NLL 1.670, legality AP 0.013** (legality 감독 없음, 예상대로 0)
+- **G3 평균: top-1 0.4747±0.0003, NLL 1.672, legality AP 0.9911** (정책 저하 0, 합법성 거의 완벽)
+
+### Gate 1 판정: 통과 (3-seed, 모든 기준 큰 폭 초과)
+- top-1 0.475 ≥ 목표 0.42 ✓ | NLL 1.67 ≤ 2.1 ✓ | G3 legality AP 0.991 ≥ 0.60 ✓
+- 시드 분산 극소(±0.0003~0.0013) → 재현성 확정
+- 기존 백본(531k/2ep) 대비: top-1 0.318→0.475, NLL 2.41→1.67, legality AP 0.415→0.991
+- **다음: Gate 2 공식 판정** (6 checkpoint 임베딩 재수출 → week17/18 동결 comment regime + language_probe_v2 retrieval + null control)
+
+### worktree 삭제 복구 (동일 날짜)
+- worktree(claude/frosty-nightingale-74a0f3)가 git에서 분리됨. 결과물(outputs/scale_v1 9GB, gitignore)과
+  학습데이터(real_v2_scale/r1800)는 worktree 로컬에만 존재 → origin으로 robocopy 대피 완료.
+- 코드 7커밋은 브랜치에 안전. origin에서 `scale_v1` 브랜치 신규 생성해 복구(비파괴적).
+- 교훈: gitignore된 대용량 산출물은 worktree 밖(origin outputs/)에 두거나 주기적 대피 필요.
