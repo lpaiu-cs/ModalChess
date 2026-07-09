@@ -1,0 +1,55 @@
+{
+  "campaign": "scale_v1",
+  "date": "2026-07-10",
+  "branch": "scale_v1",
+  "hypothesis": "H1: 언어 신호 부재의 주원인은 corpus가 아니라 backbone 용량/학습량 부족",
+  "winner_tier": {"name": "M", "d_model": 384, "num_layers": 8, "params": 14990558},
+  "data_axis": {"chosen": "D1_unfiltered", "positions": 2000000, "source": "lichess_2015_01"},
+  "old_backbone_baseline": {"params": 531142, "epochs": 2, "top_1": 0.318, "nll": 2.41, "legality_ap": 0.415},
+  "gate1": {
+    "verdict": "pass",
+    "seeds": [11, 17, 23],
+    "g1": {"top_1_mean": 0.4746, "top_1_std": 0.0013, "nll_mean": 1.670, "legality_ap_mean": 0.013},
+    "g3": {"top_1_mean": 0.4747, "top_1_std": 0.0003, "nll_mean": 1.672, "legality_ap_mean": 0.9911},
+    "targets": {"top_1": 0.42, "nll": 2.1, "legality_ap": 0.60}
+  },
+  "gate2": {
+    "verdict": "partial_pass",
+    "language_probe_v2": {"mate_t2b_ratio_vs_old": 3.7, "mate_t2b_r1_vs_random": 35, "puzzle_t2b_r1_vs_random": 44, "all_configs_improved": true},
+    "comment_regime": {
+      "test_pool_rows": 3000,
+      "null_control": "permutation_50x",
+      "text_to_board": {"old_real": 0.00559, "new_real": 0.00743, "new_over_old": 1.33, "new_over_null_mean": 2.63, "all12_above_null_max": true},
+      "board_to_text": {"old_real": 0.00317, "new_real": 0.00336, "near_chance": true}
+    },
+    "g1_vs_g3_language": "neutral (new g1 t2b 0.00739 vs g3 0.00747)"
+  },
+  "option_b_text_axis": {
+    "encoder": "sentence-transformers/all-MiniLM-L6-v2",
+    "loader": "transformers AutoModel mean-pool normalized",
+    "factorial_t2b_strict_mrr": {
+      "old_tfidf": 0.00559,
+      "new_tfidf": 0.00743,
+      "old_sentence": 0.00692,
+      "new_sentence": 0.01084
+    },
+    "lifts": {"backbone_alone": 1.33, "text_alone": 1.24, "both_total": 1.94, "compounding": true},
+    "new_sentence_vs_null_mean": 3.82,
+    "new_sentence_all12_above_null_max": true
+  },
+  "gate3": {
+    "verdict": "GO_conditional",
+    "next": "small contrastive connector (frozen Tier M board encoder + frozen sentence encoder, symmetric InfoNCE, source-family balanced)",
+    "out_of_scope": ["full LLM fusion", "rationale generation training", "RL"],
+    "backbone_default": "G3", "backbone_control": "G1",
+    "backbone_choice_basis": "downstream substrate (legality AP 0.99, no policy cost), NOT language signal (G1 approx G3)",
+    "early_stop_gate": "connector must clearly beat frozen-probe 0.01084 t2b MRR; if board_to_text stays near null, suspect data alignment ceiling before connector architecture"
+  },
+  "honest_caveats": {
+    "absolute_mrr": 0.01084,
+    "approx_rank_out_of_3000": 90,
+    "usable_topk": false,
+    "board_to_text": "near_chance",
+    "possible_fundamental_alignment_ceiling": true
+  }
+}

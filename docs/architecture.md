@@ -470,17 +470,24 @@ move quality는 이제 두 층으로 나눠 본다.
 - 외부 comment / sidecar / puzzle theme와 얼마나 잘 맞는지
 - retrieval이나 작은 probe로만 본다
 
-### 왜 eval-only인가
+### 왜 지금까지 eval-only였나
 
-정확히 겹치는 board+move+text 학습 데이터가 아직 충분히 깨끗하지 않기 때문이다.
+정확히 겹치는 board+move+text 학습 데이터가 아직 충분히 깨끗하지 않았고, 그래서 보수적으로
+데이터 품질·split hygiene를 점검하며 frozen embedding에 언어 신호가 있는지만 봤다.
 
-그래서 지금은 보수적으로:
+### scale_v1 이후 (2026-07)
 
-- 먼저 데이터 품질을 올리고
-- split hygiene를 점검하고
-- frozen embedding에 언어 신호가 있는지 본다
+week18까지 언어 신호는 잡음 수준이었는데, 원인이 데이터가 아니라 **작은 backbone**이라는
+가설(H1)이 scale_v1에서 확증됐다. Tier M(d384/8L) backbone과 텍스트 인코더 교체를 통해:
 
-라는 순서로 간다.
+- backbone 스케일업 단독으로 comment text→board 신호가 permutation null 위로 1.33× 상승,
+- 텍스트 축(tf-idf→문장 인코더)이 1.24× 추가 상승, 둘이 복합해 1.94×.
+- 즉 backbone·텍스트가 **대등한 복합 병목**이었다.
+
+그래서 다음 단계는 여전히 full fusion이 아니라, frozen backbone + frozen 문장 인코더 위의
+**작은 contrastive connector**다(미구현). 자세한 결정은 [scale_v1_decision.md](scale_v1_decision.md).
+단, board→text는 아직 약하고 절대 retrieval은 usable top-k 미달이라, connector 초반에 정렬
+상한을 조기 진단하는 stop gate를 둔다.
 
 ## week-9에서 새로 추가된 것
 
@@ -631,12 +638,15 @@ Legality head다.
 
 - ModalChess의 몸통은 **공간 체스 두뇌**다.
 - 이 두뇌는 **다음 수를 고르는 일**과 **체스판을 제대로 이해하는 일**을 함께 배운다.
-- 지금의 주력 두뇌는 **G1**이고, **G3**는 꼭 같이 봐야 하는 대조군이다.
-- 언어 쪽은 아직 **훈련이 아니라 평가**만 하고 있다.
-- week-9부터는 실제 사람이 단 수별 코멘트를 붙인 **move-conditioned sidecar**가 생겼다.
+- scale_v1에서 이 두뇌를 **Tier M(d384/8L)**로 키웠다. 언어 신호에선 G1≈G3이라, 이후 connector
+  후보는 substrate가 더 풍부한 **G3(기본)**·**G1(대조군)**로 둔다.
+- 언어 쪽은 아직 **훈련이 아니라 평가**(frozen probe)만 하고 있고, 학습형 connector는 미구현이다.
+- week-9부터는 실제 사람이 단 수별 코멘트를 붙인 **move-conditioned sidecar**가 생겼고,
+  scale_v1이 백본·텍스트 두 병목을 확인해 connector 착수 근거를 만들었다.
 
 그래서 다음 단계는 "바로 큰 언어 모델을 붙이는 것"이 아니라,
 
-**작고 얼린(frozen) 정렬 실험을 아주 조심스럽게 시도할 수 있는지 보는 것**
+**frozen backbone + frozen 문장 인코더 위의 작은 contrastive connector가 정렬을 학습으로
+top-k 근처까지 올릴 수 있는지 조심스럽게 검증하는 것**
 
-에 가깝다.
+에 가깝다. 결정 근거는 [scale_v1_decision.md](scale_v1_decision.md).

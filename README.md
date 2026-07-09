@@ -19,6 +19,23 @@ ModalChess는 구조화된 공간 체스 표현을 다루는 CUDA 대응 연구 
 
 파생된 체스 지식은 입력으로 넣지 않습니다.
 
+## 현재 상태 (scale_v1, 2026-07)
+
+아래 "주차별 연구 흐름"은 week1~8 기록이며, 이후 흐름은 다음과 같습니다.
+
+- week9~18: move-conditioned comment sidecar 구축·정제와 retrieval 평가. week18 판정은
+  `STILL_EVAL_ONLY_BUT_STABLE`(신호 잡음 수준).
+- **scale_v1** (브랜치 `scale_v1`): 기존 backbone(531k/2ep)이 병목이라는 가설(H1)을 검증.
+  Tier M(d384/8L, 15M) backbone을 D1(2M positions)에서 학습해 **Gate 1 통과**
+  (top-1 0.318→0.475, legality AP 0.415→0.991, 3-seed). **Gate 2 부분 통과**
+  (permutation null 상회, 단 board→text는 약함). 텍스트 축을 tf-idf→문장 인코더로
+  바꾸면 신호가 복합적으로 1.94× 상승 — 백본·텍스트 두 축이 대등한 병목임을 확인.
+- 결론과 다음 단계(작은 contrastive connector)는 [docs/scale_v1_decision.md](docs/scale_v1_decision.md),
+  시간순 로그는 [docs/scaleup_log.md](docs/scaleup_log.md) 참조.
+
+주의: 언어 경로는 아직 학습형 fusion이 아니라 frozen-probe 평가 단계다. connector는 미구현이며
+full LLM fusion·rationale generation·RL은 여전히 out of scope(stub 유지).
+
 ## 빠른 시작
 
 로컬 smoke 검증과 공식 연구용 backbone config는 분리되어 있습니다.
@@ -124,8 +141,10 @@ spatial baseline과 FEN baseline은 모두 동일한 `meta_features` 스칼라 �
 
 현재 주 backbone 규칙은 다음과 같습니다.
 
-- primary backbone: `G1`
-- secondary control: `G3`
+- week1~3 연구 backbone은 531k(d128/2L), 2 epoch였다. **scale_v1에서 Tier M(d384/8L, 15M)로
+  스케일업**해 공식 3-seed(G1/G3 × 11/17/23)를 다시 뽑았다(`outputs/scale_v1/official/`).
+- 언어 신호에서 G1≈G3(중립). connector 후보는 downstream substrate 기준 **G3 기본 / G1 control**
+  (근거: legality AP 0.99를 정책 손실 0으로). 자세한 근거는 [docs/scale_v1_decision.md](docs/scale_v1_decision.md).
 - validation이 있는 official run에서는 `best_model.pt` / `best_policy_model.pt` 선택 기준이 `val.target_move_nll`이다.
 - `best_grounding_model.pt`는 별도 grounding score 기준으로 병기
 - `pareto_epochs.json`으로 policy-grounding trade-off epoch를 함께 남김
