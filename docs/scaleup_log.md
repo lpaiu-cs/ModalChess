@@ -142,3 +142,28 @@
   학습데이터(real_v2_scale/r1800)는 worktree 로컬에만 존재 → origin으로 robocopy 대피 완료.
 - 코드 7커밋은 브랜치에 안전. origin에서 `scale_v1` 브랜치 신규 생성해 복구(비파괴적).
 - 교훈: gitignore된 대용량 산출물은 worktree 밖(origin outputs/)에 두거나 주기적 대피 필요.
+
+## 2026-07-10 — Gate 2 (language_probe_v2 regime, 3-seed) 측정
+
+### 새 백본(공식 Tier M) vs 기존 백본(week7), retrieval MRR, seed 11/17/23 평균
+| family | 방향 | 기존 | 새 백본 | 배수 | 무작위 대비 |
+|---|---|---|---|---|---|
+| MATE(자연텍스트) | board→text | 0.0005 | 0.0014 | 2.7× | 4× |
+| MATE(자연텍스트) | text→board | 0.0016 | 0.0059 | 3.7× | **12×** |
+| puzzle(합성태그) | board→text | 0.055 | 0.099 | 1.8× | (tie 포함) |
+| puzzle(합성태그) | text→board | 0.013 | 0.033 | 2.5× | **15×** |
+
+- 무작위 기준선: MATE(N≈34,852) MRR 0.00032·R@1 0.000029, puzzle(N≈5,035) MRR 0.00181.
+- strict(중복 tie 제외) 기준 새 백본 text→board R@1: MATE 0.00103(**35× 무작위**), puzzle 0.00877(**44× 무작위**).
+- **16개 구성(2 backbone × 2 pool × 2 probe × 2 direction) 전부 기존 대비 개선**, 3-seed 재현.
+- G1 vs G3: retrieval 거의 동일(legality 감독은 언어 전이에 영향 없음), puzzle에서 G3 미세 우위.
+- 비대칭: text→board가 board→text보다 3~4× 강함.
+
+### 해석 (정직)
+- **신호는 진짜다**: 무작위 대비 12~44×, 3-seed 재현. 18주간의 "잡음"이 스케일업으로 실제 신호가 됨 — H1 방향 확증.
+- **하지만 절대 수준은 여전히 약함**: MATE t2b MRR 0.006은 정답이 34k 후보 중 ~수백 등. 강한 retrieval(top-10)엔 못 미침.
+- 병목이 백본 단독이 아님을 시사: 스케일업으로 크게 개선됐으나, 텍스트 축(tf-idf BoW)과 board↔comment 정렬 난이도가 남은 상한.
+
+### 남은 공식 Gate 2 (미실행)
+- week17/18 동결 comment regime(annotated_sidecar_eval_v6/holdout_v2) + 정식 permutation null control로
+  comment 텍스트에서의 판정. 본 language_probe_v2 결과는 보조 확증(자연텍스트=MATE, 합성태그=puzzle).
