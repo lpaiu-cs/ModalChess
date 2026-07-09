@@ -226,3 +226,42 @@
 - **Gate 3 = GO(조건부)**: frozen-probe 0.0108은 학습형 connector의 하한. 두 축이 독립적으로 돕고
   복합하므로, 양쪽을 공동 최적화하는 small contrastive connector가 더 밀어올릴 근거 충분. 착수 권고.
   단 절대 정렬 상한을 조기 진단하는 체크포인트를 connector 초반에 둘 것.
+
+## 2026-07-10 — connector_v1 구현 + Gate 4 판정 (부분 통과)
+
+### 구현
+- `src/modalchess/align/`: connector(multi-positive symmetric InfoNCE), dataset(family_blocked
+  sampler m>=2 + min-family-size tail 처리), text_embed(MiniLM mean-pool 캐시), metrics(strict
+  R@k + global·within-family permutation null), train/eval. tests/test_connector.py(9), 전체 122 통과.
+- rev2 설계 반영: within-family hard negatives, ignore-mask(false negative), 2종 null,
+  early stop=mean(t2b,b2t), linear baseline.
+
+### 버그 → 진단 (3-seed 프로토콜이 잡음)
+- 1차 grid에서 seeds 17/23이 null 아래로 붕괴. 진단: grid가 board 경로를 override하지 않아
+  **모든 seed가 seed11 board로 학습**되고 eval만 per-seed board 사용 → 공간 불일치. train CLI에
+  `--train/val/test-board` override 추가로 수정. (val은 건강한데 test만 붕괴 + real<null이 단서.)
+
+### Gate 4 결과 (수정 후, comment regime 3000행 test, 3-seed)
+| 구성 | t2b | b2t | mean | R@10 | R@50 | wf-null(t2b/b2t) |
+|---|---|---|---|---|---|---|
+| G3 mlp | 0.01254±0.0004 | 0.01315±0.0013 | 0.01284 | 0.021 | 0.077 | 3/3 · 3/3 |
+| G1 mlp | 0.01170 | 0.01345 | 0.01257 | 0.020 | 0.083 | 3/3 · 3/3 |
+| G3 linear | 0.01149 | 0.01202 | 0.01176 | 0.019 | 0.085 | 3/3 · 3/3 |
+
+- vs frozen-probe(new+sentence): t2b 1.16×, **b2t 3.27×**, **mean 1.73×**.
+- vs random(N=3000): MRR 4.4×, R@10 6.3×, R@50 4.6×.
+- **9개 런(G1/G3/linear × 3seed) 전부 global·within-family null 양방향 통과** — family/style
+  shortcut 아님이 재현적으로 확증. seed 분산 극소.
+- linear vs mlp: mlp가 t2b +9%(0.0115→0.0125). 비선형 head 이득은 작고 linear도 전 null 통과.
+- G1≈G3.
+
+### Gate 4 판정: 부분 통과 (연구적 성공, 실용 미달)
+- ✓ **학습형 board↔comment 정렬이 real·대칭·shortcut-robust·재현적**임을 최초 확증
+  (within-family null 9/9). frozen-probe의 일방향(b2t near-chance) 약점을 connector가 해결(3.3×).
+- ✓ min-bar(mean 1.73×) 통과.
+- ✗ **절대 retrieval 여전히 약함**: R@50 ~8%(정답이 top-50에 8%) — usable top-k 미달. t2b는
+  frozen-probe를 소폭만 상회.
+- 해석: 정렬은 학습으로 오르고 real이지만, frozen-frozen contrastive의 modest 상한. 다음 레버
+  (가벼운 인코더 fine-tune, 더 나은 move-conditioned pair)는 계획상 명시적 유보 — 본 단계 범위 밖.
+- **결론**: "정렬이 학습으로 실제 오르는가?"에 **예(단, 아직 usable top-k는 아님)**. 최소 connector의
+  목적을 달성했고 fusion/RL은 계속 out of scope.

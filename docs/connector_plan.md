@@ -1,6 +1,9 @@
 # connector_v1 설계·구현 계획
 
-- 상태: proposed (미구현), rev2 — GPT 리뷰(2026-07-10) 반영
+- 상태: **구현·실행 완료 (2026-07-10). Gate 4 = 부분 통과.** 결과는 scaleup_log.md 참조.
+  요약: within-family null 9/9 통과(shortcut 아님), b2t 3.3× 상승, mean 1.73× — 정렬은 real·재현적,
+  그러나 절대 retrieval(R@50 ~8%)은 usable top-k 미달. 다음 레버(인코더 fine-tune 등)는 유보.
+- 상태(원안): proposed, rev2 — GPT 리뷰(2026-07-10) 반영
 - 전제: [scale_v1_decision.md](scale_v1_decision.md) Gate 3 = GO(조건부)
 - rev2 보강(shortcut 방어가 핵심): within-family hard negatives(`family_blocked`, m≥2),
   within-source-family permutation null, multi-positive InfoNCE(false-negative group),

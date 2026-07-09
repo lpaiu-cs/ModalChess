@@ -85,6 +85,17 @@ best epoch == last epoch(수렴 전 중단)였다. scale_v1은 평가 인프라�
 5. backbone 후보: **G3 기본 / G1 control**. 주의 — 언어 신호에서 G1≈G3(중립)이며, G3 선택은
    언어 근거가 아니라 downstream substrate(legality AP 0.99, 정책 손실 0) 베팅이다.
 
+## Gate 4 (connector_v1, 2026-07-10) — 부분 통과
+
+frozen Tier M board + frozen MiniLM 위 small contrastive connector 구현·실행(3-seed, G1/G3,
+mlp+linear). comment regime 3000행 test:
+- **within-family permutation null을 9/9 런 양방향 통과** → 학습형 board↔comment 정렬이
+  family/style shortcut이 아니라 real임을 재현적으로 확증.
+- b2t(기존 near-chance)를 frozen-probe 대비 3.3×로 rescue, mean 1.73×로 min-bar 통과.
+- 그러나 절대 retrieval R@50 ~8%로 usable top-k 미달, t2b는 frozen-probe 소폭 상회.
+- 판정: 최소 connector 목적("정렬이 학습으로 real하게 오르는가") 달성 = **예(usable는 아직 아님)**.
+  다음 레버(인코더 fine-tune, 더 나은 pair)는 유보. fusion/rationale/RL은 계속 out of scope.
+
 ## 참조
 
 - 결과물(gitignore): `outputs/scale_v1/**` (origin 로컬, robocopy 대피본).
