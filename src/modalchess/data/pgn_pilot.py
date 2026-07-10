@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import hashlib
 from pathlib import Path
+import re
 from typing import Any
 
 import chess
@@ -74,8 +75,10 @@ def _is_rated_game(headers: dict[str, str]) -> bool:
     rated_header = (headers.get("Rated") or "").strip().lower()
     if rated_header in {"true", "yes", "1"}:
         return True
+    if rated_header in {"false", "no", "0"}:
+        return False
     event = (headers.get("Event") or "").strip().lower()
-    return "rated" in event
+    return re.search(r"\brated\b", event) is not None
 
 
 def _parse_player_rating(headers: dict[str, str], header_name: str) -> int | None:

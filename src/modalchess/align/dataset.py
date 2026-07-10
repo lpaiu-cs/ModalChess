@@ -90,8 +90,10 @@ class FamilyBlockedSampler:
         families_per_batch: int,
         samples_per_family: int,
         seed: int = 0,
-        drop_last: bool = True,
+        drop_last: bool = False,
     ) -> None:
+        if families_per_batch < 1:
+            raise ValueError("families_per_batch >= 1이 필요하다.")
         if samples_per_family < 2:
             raise ValueError("family_blocked에는 samples_per_family >= 2가 필요하다.")
         self.families_per_batch = families_per_batch
@@ -107,34 +109,81 @@ class FamilyBlockedSampler:
         for family, idxs in self.by_family.items():
             if len(idxs) < samples_per_family:
                 self.misc.extend(idxs)
+        if not self.blockable:
+            raise ValueError(
+                "family_blocked batch를 만들 수 없다: "
+                f"samples_per_family={samples_per_family} 이상인 source_family가 필요하다."
+            )
         self._num_batches = self._estimate_num_batches()
 
     def _estimate_num_batches(self) -> int:
-        total_blockable = sum(len(self.by_family[f]) for f in self.blockable)
-        return max(1, total_blockable // self.batch_size)
+        groups_per_family = [
+            len(self.by_family[family]) // self.samples_per_family
+            for family in self.blockable
+        ]
+        misc_count = len(self.misc) + sum(
+            len(self.by_family[family]) % self.samples_per_family
+            for family in self.blockable
+        )
+        batches = 0
+        while any(count > 0 for count in groups_per_family):
+            family_slots = self.families_per_batch
+            if misc_count > 0 and family_slots > 1:
+                family_slots -= 1
+            ready = sorted(
+                (index for index, count in enumerate(groups_per_family) if count > 0),
+                key=lambda index: groups_per_family[index],
+                reverse=True,
+            )
+            chosen = ready[:family_slots]
+            for index in chosen:
+                groups_per_family[index] -= 1
+            remaining = self.batch_size - len(chosen) * self.samples_per_family
+            misc_used = min(remaining, misc_count)
+            misc_count -= misc_used
+            batch_size = len(chosen) * self.samples_per_family + misc_used
+            if not self.drop_last or batch_size == self.batch_size:
+                batches += 1
+        return batches
 
     def __len__(self) -> int:
         return self._num_batches
 
     def __iter__(self):
         # family별 셔플된 큐를 만들고, 매 batch마다 F family에서 m개씩 뽑는다.
-        pools = {f: self.rng.sample(self.by_family[f], len(self.by_family[f])) for f in self.blockable}
+        pools: dict[str, list[int]] = {}
         misc_pool = self.rng.sample(self.misc, len(self.misc)) if self.misc else []
+        for family in self.blockable:
+            shuffled = self.rng.sample(self.by_family[family], len(self.by_family[family]))
+            blockable_count = (len(shuffled) // self.samples_per_family) * self.samples_per_family
+            pools[family] = shuffled[:blockable_count]
+            misc_pool.extend(shuffled[blockable_count:])
+        self.rng.shuffle(misc_pool)
         active = [f for f in self.blockable if len(pools[f]) >= self.samples_per_family]
-        self.rng.shuffle(active)
-        produced = 0
-        while produced < self._num_batches:
+        while active:
             ready = [f for f in active if len(pools[f]) >= self.samples_per_family]
-            if len(ready) < self.families_per_batch:
+            if not ready:
                 break
-            chosen = self.rng.sample(ready, self.families_per_batch)
+            # misc tail이 있으면 한 family slot을 비워 실제 batch에 섞는다. 단, 최소 한
+            # blockable family는 유지해 within-family hard negative 계약을 보존한다.
+            family_slots = self.families_per_batch
+            if misc_pool and family_slots > 1:
+                family_slots -= 1
+            self.rng.shuffle(ready)
+            ready.sort(key=lambda family: len(pools[family]), reverse=True)
+            chosen = ready[:family_slots]
             batch: list[int] = []
             for family in chosen:
                 for _ in range(self.samples_per_family):
                     batch.append(pools[family].pop())
+            remaining = self.batch_size - len(batch)
+            for _ in range(min(remaining, len(misc_pool))):
+                batch.append(misc_pool.pop())
             self.rng.shuffle(batch)
+            active = [f for f in active if len(pools[f]) >= self.samples_per_family]
+            if self.drop_last and len(batch) < self.batch_size:
+                continue
             yield batch
-            produced += 1
 
 
 def build_batch_masks(pairs: AlignedPairs, indices: list[int]):

@@ -324,6 +324,37 @@ def test_min_rating_filter_drops_low_and_missing_rating_games() -> None:
         pgn_path.unlink(missing_ok=True)
 
 
+def test_rated_only_rejects_unrated_event_and_explicit_false_header(tmp_path: Path) -> None:
+    pgn_text = """[Event "Unrated Blitz game"]
+[Site "https://lichess.org/unrated1"]
+
+1. e4 e5 *
+
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/false001"]
+[Rated "False"]
+
+1. d4 d5 *
+
+[Event "Rated Blitz game"]
+[Site "https://lichess.org/rated001"]
+
+1. c4 e5 *
+"""
+    pgn_path = tmp_path / "rated_only.pgn"
+    pgn_path.write_text(pgn_text, encoding="utf-8")
+
+    records_by_split, report = build_supervised_records_from_pgn(
+        [pgn_path],
+        PgnPilotBuildConfig(rated_only=True, min_game_plies=1),
+    )
+
+    assert report["games_seen"] == 3
+    assert report["games_kept"] == 1
+    assert report["drop_reasons"].get("unrated_game") == 2
+    assert sum(len(records) for records in records_by_split.values()) == 2
+
+
 def test_run_training_early_stops_with_frozen_model(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(train_entry, "resolve_device", lambda: torch.device("cpu"))
     config = {

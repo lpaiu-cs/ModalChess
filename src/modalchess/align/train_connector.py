@@ -79,7 +79,13 @@ def train_connector(config: dict[str, Any]) -> dict[str, Any]:
     def batches_for_epoch(epoch: int) -> list[list[int]]:
         if sampler is not None:
             sampler.rng.seed(seed * 1000 + epoch)
-            return list(iter(sampler))
+            batches = list(iter(sampler))
+            if not batches:
+                raise ValueError(
+                    "family_blocked sampler가 batch를 만들지 못했다. "
+                    "source_family 분포와 families_per_batch/samples_per_family 설정을 확인하라."
+                )
+            return batches
         generator = torch.Generator().manual_seed(seed * 1000 + epoch)
         order = torch.randperm(len(train_pairs), generator=generator).tolist()
         return [order[i : i + batch_size] for i in range(0, len(order), batch_size) if len(order[i : i + batch_size]) > 1]

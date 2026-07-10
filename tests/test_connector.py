@@ -112,12 +112,38 @@ def test_family_blocked_sampler_guarantees_within_family_negatives() -> None:
     assert set(sampler.misc) == {60, 61}  # D,E 인덱스
     batches = list(iter(sampler))
     assert len(batches) >= 1
+    seen_indices: set[int] = set()
     for batch in batches:
-        assert len(batch) == 8  # 2 family × 4
+        assert 2 <= len(batch) <= 8
+        seen_indices.update(batch)
         fam_counts = Counter(families[i] for i in batch)
-        # 각 뽑힌 family는 정확히 m개 → within-family negative 보장
-        assert all(c == 4 for c in fam_counts.values())
-        assert len(fam_counts) == 2
+        # misc tail이 섞여도 적어도 한 blocked family는 m개 → hard negative 보장
+        assert any(c == 4 for c in fam_counts.values())
+    assert {60, 61}.issubset(seen_indices)  # singleton tail도 버리지 않는다.
+
+
+def test_family_blocked_sampler_adapts_to_fewer_families_than_configured() -> None:
+    from modalchess.align.dataset import FamilyBlockedSampler
+
+    families = ["A"] * 8
+    sampler = FamilyBlockedSampler(
+        families, families_per_batch=16, samples_per_family=4, seed=1
+    )
+    batches = list(iter(sampler))
+    assert len(batches) == 2
+    assert all(len(batch) == 4 for batch in batches)
+    assert sorted(index for batch in batches for index in batch) == list(range(8))
+
+
+def test_family_blocked_sampler_rejects_corpus_without_blockable_family() -> None:
+    import pytest
+
+    from modalchess.align.dataset import FamilyBlockedSampler
+
+    with pytest.raises(ValueError, match="family_blocked batch"):
+        FamilyBlockedSampler(
+            ["A", "B", "C"], families_per_batch=16, samples_per_family=4
+        )
 
 
 def test_build_batch_masks_wrapper() -> None:
