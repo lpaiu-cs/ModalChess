@@ -41,3 +41,95 @@
   원자적 저장(.tmp→replace) + train_arm 재개(마지막 완료 epoch 다음부터, optimizer/
   global_step/best/history 복원) + arm-level skip(eval.json 완료 arm 재실행 방지).
   재개 스모크 통과. → 이후 중단은 최대 1 epoch만 손실, 러너 재실행이 멱등.
+- 후속 버그·수정: 체크포인트 저장 경로의 출력 디렉터리가 학습 후에야 생성돼 첫 epoch
+  경계 저장이 크래시(board arm 재유실). `train_arm` 시작 시 mkdir로 수정, 미존재 디렉터리
+  실CLI로 재검증. (교훈: 스모크가 디렉터리를 미리 만들어 버그를 가렸음 — 실행 조건 재현 필수.)
+
+## P1 스크리닝 중간 결과 (seed 11)
+
+### board arm (완료) — test n=11,693
+- overall **0.8251** (T1 지각 0.8551 / T2 관계 0.7876), held-out 템플릿 0.7251,
+  **shuffled-board null 0.5742**(틀린 보드 주입 시), best_epoch 2 val 0.8445.
+- per-task: side_to_move 0.9992, is_check 0.9962, castling 0.9429, king_square 0.9154,
+  piece_count 0.843, square_attacked 0.7746, piece_defended 0.7198, piece_pinned 0.6597,
+  piece_on_square 0.5754(13-way, 최난).
+- 예비 관찰: 보드 셔플 시 0.825→0.574로 25pt 하락 → 보드 콘텐츠가 실제로 쓰임(V2 예비
+  지지). 단 사전 등록 판정(V1 vs Blind, M1 vs FEN-최강)은 해당 arm 완료 후. shuffled-null은
+  틀린 보드를 여전히 주입하므로 Blind(보드 없음)와 다름 — 바닥값은 Blind로 확정해야 함.
+
+### fen_soft arm (완료) vs board — M1의 핵심 접전
+| metric | board | fen_soft | diff(F−B) |
+|---|---|---|---|
+| overall | 0.8251 | **0.8451** | +0.020 |
+| T1 지각 | 0.8551 | **0.9293** | +0.074 |
+| T2 관계 | **0.7876** | 0.7399 | −0.048 |
+| held-out tpl | 0.7251 | **0.7825** | +0.058 |
+| shuffled null | 0.5742 | 0.5986 | +0.025 |
+
+per-task 핵심 반전: **piece_on_square** board 0.575 / fen_soft **0.789**(+0.213 — FEN은 판을
+문자로 직접 나열하니 칸 읽기가 쉬움), **is_check** board **0.996** / fen_soft 0.721(−0.275 —
+인코더는 state-probe로 in-check를 직접 학습해 보드 토큰에 체크 정보 내장, FEN엔 계산 필요).
+king_square·piece_count·square_attacked는 fen_soft 우세(문자 조회), piece_pinned·defended 근소.
+
+**예비 해석(seed11, Blind/rawboard 미완)**: 단순 논제("공간 토큰 > FEN 문자열")는 **지각
+과제에선 반증 방향** — LM은 FEN 문자열을 매우 잘 읽는다. 공간 토큰이 이기는 건 인코더가
+지도학습(state-probe)으로 **계산된 상태(체크 등)를 미리 담은** 과제뿐. 즉 M1(board가 FEN-최강을
+오류 25%↓)은 **실패 방향**이고, 진짜 발견은 "사전학습 인코더의 가치는 raw 판독이 아니라
+파생 상태에 있다"는 과제 의존적 분리 — 이는 C3(vs RawBoard)에서 정면 검증할 지점.
+
+### 4-arm 정량 게이트 (seed11, test; rawboard 미완)
+| arm | overall | T1 지각 | T2 관계 |
+|---|---|---|---|
+| board | 0.8251 | 0.8551 | 0.7876 |
+| fen_soft | **0.8451** | **0.9293** | 0.7399 |
+| fen_zs | 0.4463 | 0.4503 | 0.4413 |
+| blind | 0.6460 | 0.6183 | 0.6806 |
+
+- **V1 (Board−Blind, T1 ≥ +30pt): 미달** — +0.2368(23.7pt) < 30pt.
+- **M1 (Board가 FEN-최강 오류 25%↓): 실패** — board 0.825 < fen_soft 0.845 (board가 뒤).
+- **per-task Board−Blind**: side_to_move +0.475, is_check +0.474, castling +0.450,
+  piece_count +0.275 (인코더 지도학습 속성 = board 압도) / king_square +0.042,
+  piece_pinned +0.059 (근소) / **piece_defended −0.060, piece_on_square −0.057,
+  square_attacked −0.045 (board가 blind보다 나쁨 — 공간 pooled 토큰이 세밀 판독엔 오히려 방해)**.
+- **Blind 누출 경고(설계 성공)**: blind이 king_square 0.874·square_attacked 0.819·
+  piece_defended 0.780로 높음 → 이 과제들은 질문 파라미터(칸·색)가 답과 상관되어 누출.
+  깨끗한 과제(side_to_move·is_check·castling)는 blind ≈0.5로 board가 진짜 판독. V1의
+  미달은 부분적으로 누출된 blind 바닥값 인플레 탓 — QA 누출 수정 시 Board−Blind 상승 여지.
+
+**중간 결론(seed11)**: 사전 등록 두 정량 게이트 모두 미달 방향. 정직한 발견은 (a) FEN 문자열이
+이 LM에는 더 나은 판 입력, (b) 공간 pooled 토큰은 **인코더가 지도학습으로 계산해둔 상태**
+(턴/캐슬/체크/기물수)에서만 값을 더하고 세밀 판독은 오히려 약화, (c) blind가 QA 누출을 드러냄.
+rawboard(C3)로 "그 파생-상태 이득이 사전학습 인코더 덕인지 raw plane으로도 되는지" 확정 예정.
+
+## P1 스크리닝 최종 (seed11, 5-arm 완료) — 사전 등록 게이트 판정
+
+| arm | overall | T1 지각 | T2 관계 | held-out | shuffled-null |
+|---|---|---|---|---|---|
+| fen_soft | **0.8451** | **0.9293** | 0.7399 | 0.7825 | 0.5986 |
+| board | 0.8251 | 0.8551 | **0.7876** | 0.7251 | 0.5742 |
+| rawboard | 0.8219 | 0.8918 | 0.7347 | 0.7437 | 0.6004 |
+| blind | 0.6460 | 0.6183 | 0.6806 | 0.5837 | — |
+| fen_zs | 0.4463 | 0.4503 | 0.4413 | 0.4806 | 0.3878 |
+
+**게이트 판정**:
+- **V1 (Board−Blind T1 ≥ +30pt): 미달** (+23.7pt). 단 blind이 QA 누출로 인플레(아래)이라
+  깨끗한 과제에선 board가 진짜 판독 — 미달은 부분적으로 QA 아티팩트.
+- **M1 (Board가 FEN-최강 오류 25%↓): 실패** — board 0.825 < fen_soft 0.845, board가 **뒤**.
+  이 비교는 board·fen이 동일 QA를 보므로 누출이 상쇄됨 → **깨끗한 실패**.
+- **C3 (board vs rawboard = 인코더 사전학습 가치): overall +0.003 (사실상 동률)**.
+  per-task: **is_check board 0.996 vs raw 0.787 (+0.209)** · piece_pinned +0.062 (파생 상태)
+  에서만 인코더 우위. raw 판독(piece_on_square raw 0.680 vs board 0.575 **−0.105**,
+  king_square −0.042, piece_count −0.034, defended/attacked −0.03)은 **원시 plane이 더 나음**.
+
+**최종 해석 (seed11 스크리닝)**: 사전 등록한 단순 논제 "공간 모달리티 > FEN 문자열"은
+**반증**된다. (1) FEN 텍스트가 이 LM엔 더 나은 판 입력(M1 깨끗한 실패). (2) 사전학습 인코더는
+원시 plane 대비 **전체 동률**이고 세밀 판독은 오히려 약화 — pooling이 crisp한 칸별 기물 정체성을
+뭉갠다. (3) 인코더의 유일한 뚜렷한 가치는 **지도학습으로 미리 계산한 파생 상태(체크 +0.21, 핀)**
+— 원시 plane도 FEN도 2 epoch 안에 못 만드는 것. (4) blind이 QA 누출(king_square·attacked·
+defended에서 질문 파라미터가 답과 상관)을 드러냄 — 설계가 의도대로 작동, 단 V1 판정을 흐림.
+
+**disposition**: 스크리닝이 V1·M1 미달 → 사전 등록상 3-seed 확정으로 자동 진행하지 않음.
+M1 실패의 kill 사다리(deeper projection → LoRA)는 레버 심사 2질문 대상: rawboard≈board라
+병목이 인코더/projection 깊이가 아니라 "연속 보드 토큰 < 텍스트(읽기)"라는 근본이므로, 깊은
+projection이 M1을 뒤집을 개연성 낮음. 데이터가 가리키는 방향 = **하이브리드**(FEN이 읽기,
+인코더 토큰이 계산된 전술: 체크/핀/위협)로 질문 재구성. 사용자 결정 필요(§ 사용자 보고).
