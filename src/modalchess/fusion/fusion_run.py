@@ -194,6 +194,8 @@ def evaluate_items(config: dict[str, Any], arm: FusionArm, model, tokenizer,
                    device: torch.device, items: list[dict[str, Any]],
                    shuffle_board_seed: int | None = None) -> dict[str, Any]:
     """후보 logprob 채점. shuffle_board_seed 지정 시 보드 소스만 파생 순열로 치환(null)."""
+    if device.type == "cuda":
+        torch.cuda.empty_cache()  # 학습 캐시 반환 후 eval — 단편화로 인한 shared 스필 방지
     assembler = SequenceAssembler(tokenizer, inject=arm.kind != "fen_zs",
                                   fen_text=arm.uses_fen_text)
     embed_layer = model.get_input_embeddings()
@@ -226,14 +228,18 @@ def evaluate_items(config: dict[str, Any], arm: FusionArm, model, tokenizer,
         embeds = _forward_embeds(model, embed_layer, assembled, arm, arm_inputs, device)
         logits = model(inputs_embeds=embeds,
                        attention_mask=assembled["attention_mask"]).logits
-        logprobs = torch.log_softmax(logits.float(), dim=-1)
+        # 메모리 저부하: 전체 [B,seq,vocab]를 float로 캐스트하지 않고 답 토큰 위치
+        # 슬라이스에만 log_softmax를 건다. log_softmax는 vocab 차원 전체에 대해
+        # 계산되므로 결과는 전체 캐스트와 수치적으로 동일하다(사전 등록 채점 불변).
         for r, ((item_idx, cand), (ans_start, ans_len)) in enumerate(
             zip(chunk, assembled["ans_spans"])
         ):
             token_ids = assembled["input_ids"][r, ans_start : ans_start + ans_len]
-            lp = logprobs[r, ans_start - 1 : ans_start + ans_len - 1]
+            span = logits[r, ans_start - 1 : ans_start + ans_len - 1].float()
+            lp = torch.log_softmax(span, dim=-1)
             total = float(lp.gather(1, token_ids.unsqueeze(1)).sum())
             scores[item_idx].append((cand, total))
+        del logits, embeds
 
     correct_flags: list[bool] = []
     for idx, item in enumerate(items):
