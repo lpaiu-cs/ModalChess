@@ -144,7 +144,36 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
     best = {"score": -1.0, "state": None, "epoch": -1}
     history: list[dict[str, Any]] = []
     global_step = 0
-    for epoch in range(epochs):
+    start_epoch = 0
+
+    # epoch별 재개: train_checkpoint.pt가 있으면 마지막 완료 epoch 다음부터 이어간다.
+    ckpt_path = Path(config["output_dir"]) / "train_checkpoint.pt"
+    if config.get("resume", True) and ckpt_path.exists():
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        if ckpt.get("seed") == seed and ckpt.get("arm") == arm.kind:
+            arm.load_state_dict(ckpt["arm_state"], strict=False)
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            best = ckpt["best"]
+            history = ckpt["history"]
+            global_step = ckpt["global_step"]
+            start_epoch = ckpt["epoch"] + 1
+            print(f"[resume] {arm.kind}: epoch {ckpt['epoch']} 완료 지점에서 재개 "
+                  f"(best_val={best['score']:.4f}, global_step={global_step})", flush=True)
+
+    def save_checkpoint(epoch: int) -> None:
+        tmp = ckpt_path.with_suffix(".pt.tmp")
+        torch.save(
+            {"arm": arm.kind, "seed": seed, "epoch": epoch, "global_step": global_step,
+             "arm_state": {k: v.detach().cpu().clone()
+                           for k, v in arm.state_dict().items()
+                           if not k.startswith("backbone.")},
+             "optimizer_state": optimizer.state_dict(),
+             "best": best, "history": history},
+            tmp,
+        )
+        tmp.replace(ckpt_path)  # 원자적 교체 — 저장 도중 kill돼도 이전 체크포인트 보존
+
+    for epoch in range(start_epoch, epochs):
         rng = random.Random(seed * 1000 + epoch)
         order = list(range(len(train_items)))
         rng.shuffle(order)
@@ -183,6 +212,7 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
                               for k, v in arm.state_dict().items()
                               if not k.startswith("backbone.")},
                     "epoch": epoch + 1}
+        save_checkpoint(epoch)  # epoch 경계마다 저장 → 중단 시 최대 1 epoch만 손실
     if best["state"] is not None:
         arm.load_state_dict(best["state"], strict=False)
     return {"best_val_accuracy": best["score"], "best_epoch": best["epoch"],
@@ -280,6 +310,19 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     seed = int(config["seed"])
     torch.manual_seed(seed)
 
+    # arm-level 재개: 이미 완료된 arm(eval.json + test)이면 재실행하지 않고 건너뛴다.
+    out_dir = Path(config["output_dir"])
+    done_path = out_dir / "eval.json"
+    if config.get("resume", True) and done_path.exists():
+        try:
+            prev = json.loads(done_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            prev = None
+        if prev and prev.get("test", {}).get("overall", {}).get("accuracy") is not None:
+            print(f"ARM_SKIP {arm_kind} seed={seed} "
+                  f"test_acc={prev['test']['overall']['accuracy']:.4f} (already done)", flush=True)
+            return prev
+
     calib = json.loads(Path(config["calib_json"]).read_text(encoding="utf-8"))
     tokenizer = AutoTokenizer.from_pretrained(config["model_dir"])
     model = AutoModelForCausalLM.from_pretrained(
@@ -328,6 +371,9 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     (out_dir / "eval.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    ckpt = out_dir / "train_checkpoint.pt"
+    if ckpt.exists():
+        ckpt.unlink()  # arm 완료 — 재개 체크포인트 불필요
     print(f"ARM_DONE {arm_kind} seed={seed} "
           f"test_acc={summary['test']['overall']['accuracy']:.4f}", flush=True)
     return summary
