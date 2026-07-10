@@ -1,0 +1,21 @@
+# Phase 2 P1 (docs/phase2_plan.md §6-7): 4-arm + fen_zs, frozen LM 위 arm 학습.
+seed: 11
+qa_dir: outputs/phase2/qa_v1
+model_dir: E:/models/Qwen3-4B-Instruct-2507
+calib_json: outputs/phase2/p0_sanity.json
+encoder_checkpoint: outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_model.pt
+output_dir: outputs/phase2/p1_v1
+
+# 학습 (전 arm 공통 — arm별 lr 스윕 금지, plan §7)
+batch_size: 16
+eval_batch_size: 48
+lr: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+epochs: 2
+grad_clip: 1.0
+val_subset: 2000
+proj_hidden: 5120
+
+# 평가
+null_seed: 20260710
