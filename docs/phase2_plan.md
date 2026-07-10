@@ -131,7 +131,7 @@ C1 성공의 공식 문구는 "지각 배선"이지 "이해"가 아니다. T1은
 
 | 요소 | 값 |
 |---|---|
-| LM | Qwen/Qwen3-4B-Instruct-2507, 로컬 `E:/models/Qwen3-4B-Instruct-2507`, revision 해시는 P0에서 기입 |
+| LM | Qwen/Qwen3-4B-Instruct-2507, 로컬 `E:/models/Qwen3-4B-Instruct-2507`, revision `cdbee75f17c01a7cc42f958dc650907174af0554` (P0에서 핀) |
 | LM 선택 근거 | 현 스택(transformers 4.57.3)이 지원하는 최신 dense(`qwen3`); Qwen3.5-4B는 `qwen3_5` 미지원으로 P2 강건성 축으로 이월; fallback = 캐시된 Qwen2.5-3B-Instruct |
 | 인코더 | Tier M G3 seed11 `outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_model.pt` (grounding 선택 기준이 "보기" 목적에 정합; `best_policy`는 P2 강건성 축) |
 | 인코더 출력 | `tokens` [64, 384] (pooled 금지 — 공간 구조 보존) |
@@ -144,7 +144,13 @@ C1 성공의 공식 문구는 "지각 배선"이지 "이해"가 아니다. T1은
 - RL / self-play, 장문 rationale 생성, LM 전체 파인튜닝(LoRA는 사살 사다리 최후단에서
   양팔 동일 조건만), Stockfish/엔진 통합, retrieval 지표의 재목표화(참고 보고만).
 
-## 9. 예산 추정
+## 9. 개정 이력
+
+- **개정 1** (P0 착수 시, 어떤 데이터·결과 열람 전): T1-5 piece_count 후보
+  {0,1,2,3+} → **{0,1,2 or more}**. 사유: 3+ 클래스는 승격(promotion) 의존이라 실전
+  데이터에서 균형 ±2pt 충전이 구조적으로 불가(가용성 분석에 의한 사전 수정, 결과 무관).
+
+## 10. 예산 추정
 
 - QA 생성: CPU 수 분~수십 분. P1 학습: arm당 seed당 ~1.5h (RTX 5090, 4B frozen,
   120k items × 2ep) → 스크리닝 4 arm ≈ 6h, 확정 3-seed는 통과 arm 위주.
