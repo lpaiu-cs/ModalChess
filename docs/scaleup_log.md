@@ -307,3 +307,46 @@ Gate 4와 동일한 test pool 3000행).
   score). 목표: connector R@50 0.077 → 0.5+ (mention 하한이 이미 0.556). 싸고 즉시 가능.
 - 2순위: text encoder fine-tune(move 토큰 보존 학습) — hybrid가 포화하면.
 - board encoder fine-tune은 후순위로 강등: 벽이 board 쪽이라는 증거가 없다.
+
+## 2026-07-10 — Phase 1 레버 ①: hybrid 심볼릭 특징 connector — Gate 5 통과 (조건부)
+
+### 구현
+- `src/modalchess/align/symbolic_features.py`: board 쪽 (fen,target_move)→[140] (from/to
+  one-hot + 기물 + 전술 플래그; pair 정의의 명시화이지 정답 누출 아님), text 쪽 코멘트
+  원문만 파싱→[333] (UCI/SAN mention multi-hot + 첫-언급 one-hot + 마커). 8 tests.
+- `load_aligned_pairs`에 `features_path`/`feature_mode(hybrid|symbolic_only)` 추가 —
+  임베딩에 concat 또는 심볼릭 단독. train/eval CLI에 override 추가(grid 버그 교훈 반영).
+- config: `configs/connector/connector_hybrid_v1.yaml` (배칭·최적화는 connector_v1과 동일,
+  within-family null 등 평가 장치 전부 동결 재사용).
+
+### 결과 (comment regime 3000행 test, t2b strict)
+| 구성 | MRR | R@10 | R@50 | null(양방향) |
+|---|---|---|---|---|
+| connector_v1 (Gate 4) | 0.0125 | 0.021 | 0.077 | 통과 |
+| mention baseline (무학습, 진단 ①) | 0.0656 | 0.188 | 0.556 | — |
+| **hybrid p128 (3-seed)** | 0.1482±0.0074 | 0.286 | 0.484 | 6/6 통과 |
+| hybrid p256 (3-seed) | 0.1421±0.0085 | 0.279 | 0.476 | (위에 포함) |
+| **symbolic-only (3-seed)** | **0.2795±0.0035** | **0.506** | **0.567** | 3/3 통과 |
+
+b2t: hybrid 0.159±0.010, symbolic-only **0.365±0.004**. 9개 런 전부 global·within-family
+null 양방향 통과, seed 분산 극소.
+
+### per-family (seed11, t2b MRR / R@50)
+| family | connector_v1 | hybrid | symbolic-only |
+|---|---|---|---|
+| mate_both (n=1304) | 0.010 / 0.043 | 0.246 / 0.744 | **0.504 / 1.000** |
+| mate_testset (n=342) | 0.005 / 0.050 | 0.222 / 0.673 | 0.461 / 0.886 |
+| waterhorse (n=605) | 0.013 / 0.101 | **0.030 / 0.169** | 0.011 / 0.069 |
+| gameknot (n=579) | 0.017 / 0.111 | **0.027 / 0.149** | 0.007 / 0.071 |
+
+### 판정: Gate 5 통과 (조건부)
+- ✓ R@10 0.021 → 0.506 (24×), MRR 0.0125 → 0.280 (22×) — frozen-probe 대비 26×.
+- ✓ 학습된 심볼릭 connector가 무학습 mention baseline도 상회(MRR 4.3×: 첫-언급 가중,
+  플래그 채널 등을 학습이 회수) — mate family는 oracle 상한(R@50 1.0)에 도달.
+- ✓ 전 런 within-family null 양방향 통과 — shortcut 아님. 재현성 확정(9/9).
+- **usable top-k 달성**: R@10 ~51% (move-conditioned 세그먼트는 R@50 89~100%).
+- **fusion 발견**: naive concat은 심볼릭 채널을 절반으로 희석(0.28→0.145)하지만, move
+  비언급 family에서는 최선(waterhorse/gameknot에서 v1·symbolic 모두 상회) — 두 채널이
+  각자 맡은 세그먼트에서 기여하나 결합 방식이 손해. 다음 개선 = score-level fusion/gating.
+- 정직 캐비엇: 이 도약은 **심볼릭 신호의 회수이지 언어 이해의 증명이 아니다**(diag ①의
+  예측대로). 비언급 세그먼트(~43%)는 여전히 약함(R@50 ~0.15) — 진짜 의미 정렬의 남은 전선.

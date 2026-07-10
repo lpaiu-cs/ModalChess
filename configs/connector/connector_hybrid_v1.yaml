@@ -1,0 +1,46 @@
+# connector_hybrid_v1: 문장 임베딩 + 심볼릭 move-mention 특징 (Phase 1 레버 ①)
+# board = [Tier M 384 | move features 140], text = [MiniLM 384 | mention features 333].
+# 심볼릭 특징은 seed 무관(corpus에서 유도), board 임베딩만 per-seed override.
+seed: 11
+pool: board_pooled
+output_dir: outputs/connector_hybrid_v1/g3/seed11
+feature_mode: hybrid
+
+# precompute된 임베딩 (G3 seed11 기준; 다른 backbone/seed는 override)
+train_board: outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_train_embeddings.pt
+val_board:   outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_val_embeddings.pt
+test_board:  outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_test_embeddings.pt
+train_text:  outputs/connector_v1/text_embeddings/annotated_sidecar_train_text.pt
+val_text:    outputs/connector_v1/text_embeddings/annotated_sidecar_val_text.pt
+test_text:   outputs/connector_v1/text_embeddings/annotated_sidecar_test_text.pt
+
+# 심볼릭 특징 (scripts/precompute_symbolic_features.py로 생성)
+train_features: outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_train_features.pt
+val_features:   outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_val_features.pt
+test_features:  outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_test_features.pt
+
+# connector — proj_dim 256 기본 (square 정체성 64+64 인코딩 여유; 128은 ablation)
+projection: mlp          # {linear, mlp}
+proj_dim: 256
+hidden_dim: 512
+dropout: 0.1
+learnable_temperature: true
+init_temperature: 0.07
+
+# 배칭: connector_v1과 동일 (family_blocked, within-family hard negatives)
+balance: family_blocked
+families_per_batch: 16
+samples_per_family: 4
+multi_positive: true
+
+# 최적화: connector_v1과 동일
+epochs: 40
+learning_rate: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+early_stop_patience: 6
+batch_size: 512
+
+# 평가 null
+null_repeats: 50
+null_seed: 20260710

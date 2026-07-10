@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-board", default=None)
     parser.add_argument("--val-board", default=None)
     parser.add_argument("--test-board", default=None)
+    parser.add_argument("--proj-dim", type=int, default=None)
+    parser.add_argument("--feature-mode", default=None, choices=["hybrid", "symbolic_only"])
     return parser.parse_args()
 
 
@@ -36,7 +38,10 @@ def main() -> None:
         value = getattr(args, key)
         if value is not None:
             config[key] = value
-    for cli_key, config_key in (("train_board", "train_board"), ("val_board", "val_board"), ("test_board", "test_board")):
+    for cli_key, config_key in (
+        ("train_board", "train_board"), ("val_board", "val_board"), ("test_board", "test_board"),
+        ("proj_dim", "proj_dim"), ("feature_mode", "feature_mode"),
+    ):
         value = getattr(args, cli_key)
         if value is not None:
             config[config_key] = value

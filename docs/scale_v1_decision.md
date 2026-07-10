@@ -109,6 +109,19 @@ Gate 4의 낮은 절대 retrieval이 데이터 벽인지 인코더 벽인지 심
 - **재우선순위**: ① hybrid 텍스트 표현(문장 임베딩+move-mention 특징) → ② text encoder
   fine-tune → board encoder fine-tune은 근거 없음으로 강등. 상세: [scaleup_log.md](scaleup_log.md).
 
+## Gate 5 (hybrid 심볼릭 특징, 2026-07-10) — 통과 (조건부)
+
+진단 ①의 처방 실행: board (fen,target_move)→심볼릭 벡터[140], text 코멘트 파싱→mention
+벡터[333]을 임베딩에 결합(hybrid) 또는 단독 사용(symbolic-only). 평가 장치 전부 동결 재사용.
+- **symbolic-only 3-seed: t2b MRR 0.2795±0.0035, R@10 0.506, R@50 0.567** (Gate 4 대비
+  MRR 22×, R@10 24×; frozen-probe 대비 26×). b2t 0.365. **usable top-k 최초 달성.**
+- 9개 런(hybrid 6 + symbolic 3) 전부 global·within-family null 양방향 통과 — shortcut 아님.
+- mate family는 oracle 상한 도달(R@50 1.000). 학습이 무학습 mention baseline도 4.3× 상회.
+- fusion 발견: naive concat은 심볼릭 채널을 절반 희석하나 move 비언급 family에선 최선 —
+  다음 개선은 score-level fusion/gating.
+- 캐비엇: **심볼릭 신호의 회수이지 언어 이해의 증명 아님.** move 비언급 ~43% 세그먼트는
+  여전히 R@50 ~0.15 — 의미 정렬의 남은 전선. fusion/rationale/RL은 계속 out of scope.
+
 ## 참조
 
 - 결과물(gitignore): `outputs/scale_v1/**` (origin 로컬, robocopy 대피본).

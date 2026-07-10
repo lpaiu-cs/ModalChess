@@ -39,8 +39,15 @@ def load_aligned_pairs(
     board_embedding_path: str | Path,
     text_embedding_path: str | Path,
     pool: str = "board_pooled",
+    features_path: str | Path | None = None,
+    feature_mode: str = "hybrid",
 ) -> AlignedPairs:
-    """board .pt(pool 선택)와 text .pt를 공통 probe_id 교집합으로 정렬한다."""
+    """board .pt(pool 선택)와 text .pt를 공통 probe_id 교집합으로 정렬한다.
+
+    features_path가 주어지면 symbolic_features .pt(probe_id 키)를 결합한다:
+    - feature_mode="hybrid": 임베딩에 심볼릭 특징을 concat (기본).
+    - feature_mode="symbolic_only": 임베딩 대신 심볼릭 특징만 사용 (control).
+    """
     board_payload = torch.load(board_embedding_path, map_location="cpu", weights_only=False)
     text_payload = torch.load(text_embedding_path, map_location="cpu", weights_only=False)
     board_index = {str(pid): i for i, pid in enumerate(board_payload["probe_id"])}
@@ -53,6 +60,23 @@ def load_aligned_pairs(
     text_order = torch.tensor([text_index[pid] for pid in common], dtype=torch.long)
     board = board_payload[pool].index_select(0, board_order).float()
     text = text_payload["embedding"].index_select(0, text_order).float()
+    if features_path is not None:
+        feature_payload = torch.load(features_path, map_location="cpu", weights_only=False)
+        feature_index = {str(pid): i for i, pid in enumerate(feature_payload["probe_id"])}
+        missing = [pid for pid in common if pid not in feature_index]
+        if missing:
+            raise ValueError(f"symbolic features에 없는 probe_id {len(missing)}개 (예: {missing[:3]})")
+        feature_order = torch.tensor([feature_index[pid] for pid in common], dtype=torch.long)
+        board_feat = feature_payload["board_features"].index_select(0, feature_order).float()
+        text_feat = feature_payload["text_features"].index_select(0, feature_order).float()
+        if feature_mode == "hybrid":
+            board = torch.cat([board, board_feat], dim=1)
+            text = torch.cat([text, text_feat], dim=1)
+        elif feature_mode == "symbolic_only":
+            board = board_feat
+            text = text_feat
+        else:
+            raise ValueError(f"unknown feature_mode: {feature_mode}")
     # 메타데이터는 text payload 우선(정규화 텍스트 포함), 없으면 유도
     text_meta_index = {str(pid): i for i, pid in enumerate(text_payload["probe_id"])}
     def meta(field: str, default_from_board: bool = False) -> list[str]:

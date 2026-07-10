@@ -20,16 +20,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True)
     parser.add_argument("--connector", default=None)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--test-board", default=None)
+    parser.add_argument("--test-text", default=None)
+    parser.add_argument("--test-features", default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = load_yaml_config(args.config)
-    if args.connector is not None:
-        config["connector"] = args.connector
-    if args.output_dir is not None:
-        config["output_dir"] = args.output_dir
+    for cli_key, config_key in (
+        ("connector", "connector"), ("output_dir", "output_dir"),
+        ("test_board", "test_board"), ("test_text", "test_text"),
+        ("test_features", "test_features"),
+    ):
+        value = getattr(args, cli_key)
+        if value is not None:
+            config[config_key] = value
     result = evaluate_connector(config)
     v = result["verdict"]
     real = result["real"]
