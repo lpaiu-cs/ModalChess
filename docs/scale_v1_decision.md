@@ -125,6 +125,20 @@ Gate 4의 낮은 절대 retrieval이 데이터 벽인지 인코더 벽인지 심
   개선됐지만 상대적으로 약함(R@50 0.23~0.34) — 의미 정렬의 남은 전선(다음: text encoder
   fine-tune 표적화, 더 나은 pair). fusion/rationale/RL은 계속 out of scope.
 
+## Phase 1 진단 ② + 레버 ②b (2026-07-10) — 비언급 세그먼트 KILL: 데이터 한계로 종결
+
+- 진단 ②: 비언급 세그먼트(1278/3000, 42.6%)에서 word_level oracle R@50 0.227 <
+  현 hybrid 실측 0.274 → **심볼릭 단어 확장은 구현 전 kill**. 좌표 baseline ≈0
+  (코멘트의 좌표는 계획이지 착수가 아님), word_level_plus_to oracle R@50 1.0 —
+  판별력은 코멘트가 전달하지 않는 도착 좌표에 있다. 남은 채널 = 의미뿐.
+- 레버 ②b(MiniLM contrastive fine-tune, frozen-text 규율 명시적 해제, kill criteria 사전
+  선언): 3-seed segment t2b MRR **0.0491±0.0008 = 기준 0.0578의 0.85×** — min-bar
+  1.3× 를 3/3 미달, frozen보다도 낮음. 전체 t2b MRR도 0.404→0.370 퇴행. null은 전부
+  통과(학습 실패가 아니라 신호 부재). **판정: KILL.**
+- 결론: **비언급 세그먼트는 data-bounded — Phase 1 모델링 레버 소진. 최종 구성 =
+  frozen hybrid p128(Gate 5), fine-tune 미채택.** 세그먼트의 유일한 남은 경로는 더 나은
+  pair(데이터 획득 문제). fusion/rationale/RL은 계속 out of scope.
+
 ## 참조
 
 - 결과물(gitignore): `outputs/scale_v1/**` (origin 로컬, robocopy 대피본).

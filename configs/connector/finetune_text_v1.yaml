@@ -1,0 +1,47 @@
+# finetune_text_v1 (레버 ②b): MiniLM contrastive fine-tune — frozen-text 규율 해제.
+# 전제: 진단 ②(segment_diagnosis)가 비언급 세그먼트의 심볼릭 레버 소진을 확증.
+# kill criteria: 세그먼트 t2b MRR < 1.3×(기준 0.0578) 또는 within-family null 실패.
+seed: 11
+pool: board_pooled
+output_dir: outputs/finetune_text_v1/g3/seed11
+model_name: sentence-transformers/all-MiniLM-L6-v2
+max_length: 128
+
+# corpus (raw comment_text 필요 — text .pt 캐시가 아니라 원문을 학습 중 재인코딩)
+train_corpus: outputs/scale_v1/gate2_comment/corpus/annotated_sidecar_train.jsonl
+val_corpus:   outputs/scale_v1/gate2_comment/corpus/annotated_sidecar_val.jsonl
+test_corpus:  outputs/scale_v1/gate2_comment/corpus/annotated_sidecar_test.jsonl
+
+# frozen board 임베딩 (G3 seed11 기준; 다른 seed는 CLI override)
+train_board: outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_train_embeddings.pt
+val_board:   outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_val_embeddings.pt
+test_board:  outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_test_embeddings.pt
+
+# 심볼릭 특징 (hybrid 유지 — Gate 5 승자 구성)
+train_features: outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_train_features.pt
+val_features:   outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_val_features.pt
+test_features:  outputs/connector_hybrid_v1/symbolic_features/annotated_sidecar_test_features.pt
+
+# connector heads (Gate 5 승자 p128 유지)
+projection: mlp
+proj_dim: 128
+hidden_dim: 512
+dropout: 0.1
+learnable_temperature: true
+init_temperature: 0.07
+
+# 배칭: 동일 (family_blocked, within-family hard negatives)
+families_per_batch: 16
+samples_per_family: 4
+
+# 최적화: encoder는 BERT 관행 lr, head는 connector 관행 lr. 인코더 과적합 방지로 짧게.
+encoder_lr: 0.00002
+head_lr: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+epochs: 12
+early_stop_patience: 3
+
+# 평가 null
+null_repeats: 50
+null_seed: 20260710

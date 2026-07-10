@@ -373,3 +373,45 @@ PR #1 머지에 포함된 sampler 수정(79709a3: misc pool이 실제 배치에 
   예측대로). 비언급 세그먼트(~43%)는 개선됐지만 여전히 상대적으로 약함(R@50 0.23~0.34)
   — 진짜 의미 정렬의 남은 전선. 다음 후보: text encoder fine-tune(비언급 세그먼트 표적),
   더 나은 pair. fusion/rationale/RL은 계속 out of scope.
+
+## 2026-07-10 — Phase 1 진단 ② + 레버 ②b: 비언급 세그먼트 — KILL (데이터 한계로 종결)
+
+### 진단 ② — 세그먼트 해부 (`scripts/segment_diagnosis.py`, commit 1eb9032)
+- segment = 코멘트가 자기 수를 한 번도 명명하지 않는 **1278/3000행(42.6%)**
+  (waterhorse 574, gameknot 512). 현 hybrid 실측: t2b MRR 0.0578, R@50 0.274.
+- **word_level oracle(기물+피포획+플래그 단어를 완벽 추출 가정, 좌표 제외): R@50 0.227**
+  — 현 hybrid(0.274)가 이미 상회. 계획했던 piece/motif 단어 특징 확장은 **구현 전 kill**.
+- square-mention baseline R@50 0.003 — 코멘트에 등장하는 좌표(44.99%가 포함)는
+  계획·변화수이지 실제 착수가 아님. 좌표 채널에 pair 신호 없음.
+- word_level_plus_to oracle R@50 1.0 — 판별력은 **코멘트가 전달하지 않는 도착 좌표**에 있음.
+- 판정: 심볼릭 레버 소진, 남은 채널은 의미(semantic)뿐 → 레버 ②b로 진행하되 kill criteria
+  사전 선언: **segment t2b MRR < 1.3×0.0578(=0.0751) 또는 within-family null 실패 →
+  세그먼트는 데이터 한계로 종결.**
+
+### 레버 ②b — MiniLM contrastive fine-tune (frozen-text 규율의 명시적 해제)
+- `src/modalchess/align/finetune_text.py` + CLI/config/3 tests: MiniLM 전층 학습
+  (encoder_lr 2e-5) + connector heads(head_lr 1e-3), board 쪽은 동결 유지. hybrid 특징
+  (Gate 5 승자)·proj 128·family-blocked 배칭·null 평가 장치 전부 동결 재사용.
+  mean-pool은 frozen 파이프라인과 동일 구현, per-seed board override(그리드 버그 교훈).
+
+### 결과 (3-seed, epochs≤12, val-MRR early stop)
+| seed | 전체 t2b MRR | 전체 R@50 | segment t2b MRR | vs 기준 0.0578 | null(양방향) |
+|---|---|---|---|---|---|
+| 11 | 0.3600 | 0.686 | 0.0483 | 0.84× | 통과 |
+| 17 | 0.3689 | 0.690 | 0.0493 | 0.85× | 통과 |
+| 23 | 0.3821 | 0.695 | 0.0497 | 0.86× | 통과 |
+
+3-seed 집계: 전체 t2b MRR **0.3704±0.0111**, b2t 0.4006; segment t2b MRR
+**0.0491±0.0008 (기준의 0.85×)**, segment R@50 0.310.
+
+### 판정: KILL — 사전 선언 기준 그대로 적용
+- ✗ segment t2b MRR 0.0491 < min-bar 0.0751 — **3/3 seed 전부 미달**, 심지어 frozen 기준
+  0.0578보다도 낮다(0.85×). fine-tune은 세그먼트를 돕지 않았다.
+- 부수 손실: 전체 t2b MRR 0.404(frozen hybrid) → 0.370(−8%) — 인코더 학습이 상위 랭크
+  정밀도를 갉아먹음(R@50은 0.660→0.690 미세 상승, 상단 열화·하단 미세 개선의 트레이드).
+- null은 6/6 방향 전부 통과 — 실패는 학습 실패가 아니라 **세그먼트 텍스트에 pair-판별
+  신호가 없다**는 것. 진단 ②의 예측(판별력은 코멘트에 없는 좌표)과 정확히 일치.
+- 결론: **비언급 세그먼트(~43%)는 현 데이터로 정렬 불가(data-bounded). Phase 1 모델링
+  레버 소진.** 이 세그먼트의 유일한 남은 경로 = 더 나은 pair(착수를 실제로 서술하는
+  코멘트) — 데이터 획득 문제이지 모델링 문제가 아님.
+- **최종 구성 확정: frozen hybrid p128(Gate 5). fine-tune은 채택하지 않음.**
