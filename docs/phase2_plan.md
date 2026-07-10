@@ -156,6 +156,29 @@ C1 성공의 공식 문구는 "지각 배선"이지 "이해"가 아니다. T1은
   배치 독립·LM은 동결이라 micro-batch는 그래디언트 평균 단위에만 영향 → board arm(micro=16,
   이미 완료)과 수치적으로 동등, 재실행 불필요. 판정 대상 수치(유효 배치·lr·epochs) 불변.
 
+## 9b. P1b 사전 등록 — 수렴 + 하이브리드 (사용자 질문 3건에서 파생)
+
+P1 스크리닝(seed11)이 V1·M1 미달했으나 두 교란이 드러남: (A) 연속 토큰 arm(board/rawboard)이
+epoch2에서 Δ+0.05로 미수렴(fen_soft Δ+0.02) → "FEN 우위"가 학습량 교란일 수 있음. (B) 진짜
+질문은 "공간 단독 vs FEN"이 아니라 **"시각 채널이 FEN 위에 값을 더하는가"**.
+
+**P1b 설계 (결과 열람 전 등록)**:
+- arms: **fen_soft**(FEN 단독), **board**(공간 단독), **hybrid**(FEN 텍스트 + board 토큰 동시).
+  blind(2ep, 수렴)·fen_zs(무학습)·rawboard(2ep, C3 완료)는 참조로 재사용.
+- epochs **4** (수렴 교란 A 대응 — best-val 추적으로 과적합 방지). 그 외 전부 P1과 동일
+  (유효 배치 16·micro 8·lr 1e-3·동일 QA·동일 null). 기판 핀 불변.
+- **사전 등록 예측 (반증 가능)**:
+  - H-Q2: board@4ep가 fen_soft@4ep와의 격차를 좁히면 P1의 "FEN 우위"는 부분적으로 학습량
+    아티팩트. board가 fen을 **따라잡거나 넘으면** → 공간 단독도 충분한 학습에서 경쟁력.
+  - H-Q3 (핵심): **hybrid > fen_soft** (특히 is_check·pin에서) → 시각 채널이 FEN 위에
+    값을 더함 = 모달리티 정당화. 판정선: hybrid가 fen_soft 대비 **is_check에서 +0.10 이상**
+    이면서 overall ≥ fen_soft → "시각 채널 additive" 인정. hybrid ≈ fen_soft(전 과제)면
+    → 시각 채널은 FEN이 있으면 불필요(모달리티 반증 강화).
+  - 실패/종결: hybrid가 fen_soft를 어디서도 유의하게 못 넘고 board도 못 따라잡으면 →
+    "이 LM·이 과제에서 시각 채널은 FEN 대비 additive 가치 없음"으로 종결(정직한 부정).
+- 통과 시 3-seed 확정. QA 누출(king_square·attacked·defended)은 별도 트랙(V1 정화용),
+  M1/hybrid 비교엔 상쇄되므로 P1b 판정엔 영향 없음.
+
 ## 10. 예산 추정
 
 - QA 생성: CPU 수 분~수십 분. P1 학습: arm당 seed당 ~1.5h (RTX 5090, 4B frozen,

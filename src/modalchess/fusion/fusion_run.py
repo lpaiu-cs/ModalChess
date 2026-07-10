@@ -347,7 +347,7 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     model.eval()
 
     backbone = None
-    if arm_kind == "board":
+    if arm_kind in ("board", "hybrid"):
         backbone = FrozenBoardBackbone(config["encoder_checkpoint"]).to(device)
     arm = FusionArm(
         kind=arm_kind, d_lm=int(calib["hidden"]), calib_rms=float(calib["calibration_rms"]),

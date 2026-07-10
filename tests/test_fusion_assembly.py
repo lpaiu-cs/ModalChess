@@ -37,6 +37,20 @@ def test_blind_arm_injection_shape() -> None:
     assert len(arm.trainable_parameters()) == 1
 
 
+def test_hybrid_arm_uses_both_channels() -> None:
+    # hybrid는 board 토큰 주입 + FEN 텍스트 병행 (백본 없이 속성만 검증)
+    class _StubBackbone:
+        d_model = 8
+        history_length = 1
+
+    arm = FusionArm(kind="hybrid", d_lm=32, calib_rms=0.02, proj_hidden=16,
+                    backbone=_StubBackbone())
+    assert arm.uses_fen_text and arm.uses_board_planes
+    # 학습 파라미터는 projection(board 토큰용)뿐 — soft 토큰 없음
+    assert not hasattr(arm, "soft_tokens")
+    assert len(arm.trainable_parameters()) > 0
+
+
 @pytest.mark.skipif(not MODEL_DIR.exists(), reason="local LM not present")
 def test_sequence_assembler_spans() -> None:
     from transformers import AutoTokenizer

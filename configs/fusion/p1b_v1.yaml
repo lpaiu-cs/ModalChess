@@ -1,0 +1,21 @@
+# Phase 2 P1b (docs/phase2_plan.md §9b): 수렴(epochs 4) + hybrid arm.
+# fen_soft(FEN 단독) vs board(공간 단독) vs hybrid(FEN + board 토큰). 나머지는 P1과 동일.
+seed: 11
+qa_dir: outputs/phase2/qa_v1
+model_dir: E:/models/Qwen3-4B-Instruct-2507
+calib_json: outputs/phase2/p0_sanity.json
+encoder_checkpoint: outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_model.pt
+output_dir: outputs/phase2/p1b_v1
+
+# 학습 (전 arm 공통)
+batch_size: 16
+micro_batch_size: 8
+eval_batch_size: 48
+lr: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+epochs: 4            # 수렴 교란(Q2) 대응 — best-val 추적으로 과적합 방지
+val_subset: 2000
+
+# 평가 null
+null_seed: 20260710

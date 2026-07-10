@@ -17,7 +17,7 @@ from modalchess.data.tensor_codec import encode_fen_history
 from modalchess.train.train_spatial_baseline import build_model_from_config
 from modalchess.utils.square_utils import square_to_coords
 
-ARM_KINDS = ("board", "rawboard", "blind", "fen_soft", "fen_zs")
+ARM_KINDS = ("board", "rawboard", "blind", "fen_soft", "fen_zs", "hybrid")
 
 
 def fen_to_planes_meta(fen: str, history_length: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -116,9 +116,10 @@ class FusionArm(nn.Module):
             raise ValueError(f"unknown arm kind: {kind}")
         self.kind = kind
         self.backbone = backbone
-        if kind == "board":
+        if kind in ("board", "hybrid"):
+            # hybrid = board 토큰 주입 + FEN 텍스트 병행 (시각 채널이 FEN 위에 값을 더하는가)
             if backbone is None:
-                raise ValueError("board arm needs a backbone")
+                raise ValueError(f"{kind} arm needs a backbone")
             self.projection = ProjectionMLP(backbone.d_model, d_lm, proj_hidden, calib_rms)
         elif kind == "rawboard":
             self.projection = ProjectionMLP(raw_dim, d_lm, proj_hidden, calib_rms)
@@ -127,11 +128,11 @@ class FusionArm(nn.Module):
 
     @property
     def uses_fen_text(self) -> bool:
-        return self.kind in ("fen_soft", "fen_zs")
+        return self.kind in ("fen_soft", "fen_zs", "hybrid")
 
     @property
     def uses_board_planes(self) -> bool:
-        return self.kind in ("board", "rawboard")
+        return self.kind in ("board", "rawboard", "hybrid")
 
     def trainable_parameters(self) -> list[nn.Parameter]:
         return [p for n, p in self.named_parameters() if p.requires_grad and not n.startswith("backbone.")]
@@ -143,7 +144,7 @@ class FusionArm(nn.Module):
             batch_size = batch["n"]
             return self.soft_tokens.unsqueeze(0).expand(batch_size, -1, -1)
         planes = batch["planes"].to(device)
-        if self.kind == "board":
+        if self.kind in ("board", "hybrid"):
             meta = batch["meta"].to(device)
             tokens = self.backbone(planes, meta)
             return self.projection(tokens)

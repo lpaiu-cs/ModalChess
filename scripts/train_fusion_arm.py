@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--arm", required=True,
-                        choices=["board", "rawboard", "blind", "fen_soft", "fen_zs"])
+                        choices=["board", "rawboard", "blind", "fen_soft", "fen_zs", "hybrid"])
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--limit-train", type=int, default=None)
