@@ -120,7 +120,7 @@ def _encode_all_texts(
 
 
 def finetune_text_encoder(config: dict[str, Any]) -> dict[str, Any]:
-    from transformers import AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed = int(config.get("seed", 11))
@@ -128,13 +128,15 @@ def finetune_text_encoder(config: dict[str, Any]) -> dict[str, Any]:
     model_name = config.get("model_name", "sentence-transformers/all-MiniLM-L6-v2")
     max_length = int(config.get("max_length", 128))
     pool = config.get("pool", "board_pooled")
+    # 인코더 hidden size는 선택된 model_name에서 유도(MiniLM=384 하드코딩 금지).
+    encoder_hidden = int(AutoConfig.from_pretrained(model_name).hidden_size)
 
     train = load_finetune_split(config["train_corpus"], config["train_board"], config["train_features"], pool)
     val = load_finetune_split(config["val_corpus"], config["val_board"], config["val_features"], pool)
 
     connector_cfg = ConnectorConfig(
         board_dim=train["board"].size(1),
-        text_dim=384 + train["text_features"].size(1),
+        text_dim=encoder_hidden + train["text_features"].size(1),
         proj_dim=int(config.get("proj_dim", 128)),
         hidden_dim=int(config.get("hidden_dim", 512)),
         projection=config.get("projection", "mlp"),
@@ -277,7 +279,12 @@ def evaluate_finetuned(config: dict[str, Any]) -> dict[str, Any]:
         config["test_corpus"], config["test_board"], config["test_features"],
         pool=payload.get("pool", "board_pooled"),
     )
-    zt = _encode_all_texts(model, tokenizer, test["texts"], test["text_features"], device)
+    # 학습·selection과 동일한 truncation 정책으로 채점(저장된 config의 max_length 우선).
+    saved_config = payload.get("config", {})
+    eval_max_length = int(saved_config.get("max_length", config.get("max_length", 128)))
+    zt = _encode_all_texts(
+        model, tokenizer, test["texts"], test["text_features"], device, max_length=eval_max_length
+    )
     with torch.no_grad():
         zb = model.connector.encode_board(test["board"].to(device)).cpu()
 
