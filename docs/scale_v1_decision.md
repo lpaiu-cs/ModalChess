@@ -113,14 +113,17 @@ Gate 4의 낮은 절대 retrieval이 데이터 벽인지 인코더 벽인지 심
 
 진단 ①의 처방 실행: board (fen,target_move)→심볼릭 벡터[140], text 코멘트 파싱→mention
 벡터[333]을 임베딩에 결합(hybrid) 또는 단독 사용(symbolic-only). 평가 장치 전부 동결 재사용.
-- **symbolic-only 3-seed: t2b MRR 0.2795±0.0035, R@10 0.506, R@50 0.567** (Gate 4 대비
-  MRR 22×, R@10 24×; frozen-probe 대비 26×). b2t 0.365. **usable top-k 최초 달성.**
-- 9개 런(hybrid 6 + symbolic 3) 전부 global·within-family null 양방향 통과 — shortcut 아님.
-- mate family는 oracle 상한 도달(R@50 1.000). 학습이 무학습 mention baseline도 4.3× 상회.
-- fusion 발견: naive concat은 심볼릭 채널을 절반 희석하나 move 비언급 family에선 최선 —
-  다음 개선은 score-level fusion/gating.
+- **hybrid p128 3-seed (fixed sampler): t2b MRR 0.4044±0.0151, R@10 0.579, R@50 0.660,
+  b2t 0.4174** — Gate 4 대비 MRR 32×, R@50 8.6×, frozen-probe 대비 37×.
+  **usable top-k 최초 달성** (move-conditioned 세그먼트 R@50 92~100%, mate는 oracle 상한).
+- symbolic-only 3-seed 0.2867±0.0042 — 무학습 mention baseline(0.0656)을 학습이 4배+ 회수.
+- 전 15개 런 global·within-family null 양방향 통과 — shortcut 아님, 재현적.
+- 방법론 교훈: 초기(구 sampler) 실행에서는 "concat이 심볼릭 채널을 희석"으로 보였으나
+  **PR #1의 sampler 수정(misc-pool 실사용) 위 재검증에서 기각** — hybrid가 전 family에서
+  최선. ablation 결론도 인프라 버그에 기생할 수 있다.
 - 캐비엇: **심볼릭 신호의 회수이지 언어 이해의 증명 아님.** move 비언급 ~43% 세그먼트는
-  여전히 R@50 ~0.15 — 의미 정렬의 남은 전선. fusion/rationale/RL은 계속 out of scope.
+  개선됐지만 상대적으로 약함(R@50 0.23~0.34) — 의미 정렬의 남은 전선(다음: text encoder
+  fine-tune 표적화, 더 나은 pair). fusion/rationale/RL은 계속 out of scope.
 
 ## 참조
 

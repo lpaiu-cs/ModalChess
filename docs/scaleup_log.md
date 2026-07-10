@@ -339,14 +339,37 @@ null 양방향 통과, seed 분산 극소.
 | waterhorse (n=605) | 0.013 / 0.101 | **0.030 / 0.169** | 0.011 / 0.069 |
 | gameknot (n=579) | 0.017 / 0.111 | **0.027 / 0.149** | 0.007 / 0.071 |
 
-### 판정: Gate 5 통과 (조건부)
-- ✓ R@10 0.021 → 0.506 (24×), MRR 0.0125 → 0.280 (22×) — frozen-probe 대비 26×.
-- ✓ 학습된 심볼릭 connector가 무학습 mention baseline도 상회(MRR 4.3×: 첫-언급 가중,
-  플래그 채널 등을 학습이 회수) — mate family는 oracle 상한(R@50 1.0)에 도달.
-- ✓ 전 런 within-family null 양방향 통과 — shortcut 아님. 재현성 확정(9/9).
-- **usable top-k 달성**: R@10 ~51% (move-conditioned 세그먼트는 R@50 89~100%).
-- **fusion 발견**: naive concat은 심볼릭 채널을 절반으로 희석(0.28→0.145)하지만, move
-  비언급 family에서는 최선(waterhorse/gameknot에서 v1·symbolic 모두 상회) — 두 채널이
-  각자 맡은 세그먼트에서 기여하나 결합 방식이 손해. 다음 개선 = score-level fusion/gating.
+### 초기 판정(구 sampler) — 이후 재검증으로 일부 뒤집힘
+- 위 표의 초기 실행에서 "naive concat이 심볼릭 채널을 절반으로 희석(0.28→0.145)"으로
+  보였다. **이 발견은 sampler 버그의 산물이었다** (아래 재검증).
+
+### 재검증 — PR #1 리뷰 수정(FamilyBlockedSampler misc-pool 실사용) 반영
+PR #1 머지에 포함된 sampler 수정(79709a3: misc pool이 실제 배치에 들어가고 배치 수 추정
+정확화) 위에서 hybrid p128·symbolic-only 각 3-seed 재실행:
+
+| 구성 (fixed sampler) | t2b MRR | R@10 | R@50 | b2t MRR | null |
+|---|---|---|---|---|---|
+| **hybrid p128 (3-seed)** | **0.4044±0.0151** | **0.579** | **0.660** | 0.4174±0.0114 | 3/3 통과 |
+| symbolic-only (3-seed) | 0.2867±0.0042 | 0.515 | 0.592 | 0.3798±0.0008 | 3/3 통과 |
+
+- symbolic-only는 거의 불변(0.276→0.287)인데 **hybrid가 0.148→0.404로 2.7× 도약**.
+  원인: 구 sampler는 misc pool(소형 family 잔여)을 만들고 배치에 넣지 않아, 문장 임베딩
+  채널이 다양한 in-batch negative를 보지 못했다. 배칭이 고쳐지자 concat fusion이 제대로
+  작동 — "concat 희석" 결론은 기각, **fusion은 배칭이 올바르면 양 채널을 그대로 합성한다**.
+- per-family(seed11, MRR/R@50): mate_both **0.723/1.000**, mate_testset 0.632/0.924,
+  waterhorse 0.080/0.322, gameknot 0.041/0.231, lichess 0.081/0.338 — **전 family에서
+  hybrid가 symbolic-only·connector_v1 모두 상회**. 비언급 세그먼트도 v1 대비 R@50 2~3×.
+
+### 최종 판정: Gate 5 통과 (조건부)
+- ✓ t2b MRR 0.0125 → **0.404 (32×)**, R@50 0.077 → **0.660 (8.6×)** — frozen-probe 대비 37×.
+  전 15개 런(구 9 + 재검증 6) global·within-family null 양방향 통과, seed 분산 소.
+- ✓ 무학습 mention baseline(0.0656/0.556)을 학습이 크게 상회 — mate family는 oracle
+  상한(R@50 1.0) 도달, 첫-언급 가중·플래그 채널을 학습이 회수.
+- **usable top-k 달성**: 전체 pool R@10 58%, move-conditioned 세그먼트 R@50 92~100%.
+- 부수 교훈(방법론): 단일 코드 상태에서의 ablation 결론("concat 희석")도 인프라 버그에
+  기생할 수 있다 — 머지된 수정 위 재검증이 결론을 뒤집었다. 3-seed 프로토콜과 동일한
+  이유로, **결합 방식 비교는 배칭 수정 이후 수치만 유효**.
 - 정직 캐비엇: 이 도약은 **심볼릭 신호의 회수이지 언어 이해의 증명이 아니다**(diag ①의
-  예측대로). 비언급 세그먼트(~43%)는 여전히 약함(R@50 ~0.15) — 진짜 의미 정렬의 남은 전선.
+  예측대로). 비언급 세그먼트(~43%)는 개선됐지만 여전히 상대적으로 약함(R@50 0.23~0.34)
+  — 진짜 의미 정렬의 남은 전선. 다음 후보: text encoder fine-tune(비언급 세그먼트 표적),
+  더 나은 pair. fusion/rationale/RL은 계속 out of scope.
