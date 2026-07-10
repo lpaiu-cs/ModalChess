@@ -33,7 +33,15 @@ def evaluate_connector(config: dict[str, Any]) -> dict[str, Any]:
     model, payload = load_connector(config["connector"])
     model = model.to(device)
     pool = payload.get("pool", config.get("pool", "board_pooled"))
-    test_pairs = load_aligned_pairs(config["test_board"], config["test_text"], pool=pool)
+    feature_mode = payload.get("feature_mode", "none")
+    features_path = config.get("test_features") if feature_mode != "none" else None
+    if feature_mode != "none" and features_path is None:
+        raise ValueError(f"connector가 feature_mode={feature_mode}로 학습됨 — test_features 경로 필요")
+    test_pairs = load_aligned_pairs(
+        config["test_board"], config["test_text"], pool=pool,
+        features_path=features_path,
+        feature_mode=feature_mode if feature_mode != "none" else "hybrid",
+    )
     with torch.no_grad():
         zb = model.encode_board(test_pairs.board.to(device)).cpu()
         zt = model.encode_text(test_pairs.text.to(device)).cpu()

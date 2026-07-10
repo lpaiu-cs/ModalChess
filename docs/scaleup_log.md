@@ -265,3 +265,111 @@
   (가벼운 인코더 fine-tune, 더 나은 move-conditioned pair)는 계획상 명시적 유보 — 본 단계 범위 밖.
 - **결론**: "정렬이 학습으로 실제 오르는가?"에 **예(단, 아직 usable top-k는 아님)**. 최소 connector의
   목적을 달성했고 fusion/RL은 계속 out of scope.
+
+## 2026-07-10 — Phase 1 진단 ①: oracle ceiling (다음 레버 선정용)
+
+질문: connector의 낮은 절대 retrieval(R@50 ~8%)의 벽이 (A) 인코더인가 (B) 데이터 모호성인가.
+`src/modalchess/align/oracle_ceiling.py` + `scripts/oracle_ceiling.py` (tests 11, strict tie 동일 규칙,
+Gate 4와 동일한 test pool 3000행).
+
+### 결과 (t2b 기준)
+| 측정 | MRR | R@10 | R@50 | 의미 |
+|---|---|---|---|---|
+| duplicate ceiling (상한) | 0.987 | 0.993 | 1.000 | 정확 중복은 벽이 아님 |
+| oracle: move+flags (상한) | 0.576 | 0.912 | **1.000** | 수를 알면 pool 모호성 없음 |
+| oracle: uci_exact (상한) | 0.345 | 0.840 | 1.000 | 수 단독으로도 top-10 84% |
+| oracle: flags_only (상한) | 0.021 | 0.023 | 0.202 | generic 정보만으론 진짜 벽 |
+| **mention baseline (하한, 무학습)** | **0.0656** | 0.188 | **0.556** | SAN/UCI 문자열 매칭만으로 |
+| connector G3 (Gate 4 실측) | 0.0125 | 0.021 | 0.077 | |
+
+- **move_conditioned_fraction = 57.4%** (자기 코멘트에 자기 수의 SAN/UCI가 등장하는 pair 비율).
+  family별: mate_both 100%, mate_testset 88.6%, gameknot 11.6%, waterhorse ~3.6%, lichess 15.6%.
+- mention baseline family별 R@50: mate_both **0.992**, mate_testset 0.883 vs gameknot 0.078,
+  waterhorse 0.013 — move-conditioned 여부가 정확히 가른다.
+- oracle(move+flags)은 **전 family에서 R@50=1.0, R@10 0.75~0.96** — pool 자체는 어느 family도
+  수 수준에서 모호하지 않다.
+- 부수 발견: test pool 3000행 전부 informativeness_bucket=high (corpus가 이미 high-threshold
+  variant) → "informative-only 서브셋" 실험(진단 ②)은 이 pool에선 headroom이 없어 무의미.
+
+### 판정
+1. **가설 B(데이터 모호성) 기각** — 적어도 move-conditioned 57.4%에 대해. oracle 상한이 전
+   family에서 R@50=1.0이므로 데이터가 벽이 아니다.
+2. **진짜 병목 = 텍스트 표현이 move 토큰의 식별 정보를 버림**: 무학습 문자열 매칭이 학습된
+   전체 스택을 MRR 5.2×, R@50 7.2× 압도한다. MiniLM은 의미 인코더라 "d3h7" vs "d3d8"을
+   사실상 구분하지 못하고, 이 corpus의 지배적 정렬 신호(literal move 언급)를 통째로 잃는다.
+3. 남은 ~43%(gameknot·waterhorse 등 move 비언급 pair)는 mention으로 구제 불가 — 이쪽만이
+   "더 나은 pair" 레버의 실제 적용 대상.
+4. 정직 캐비엇: mention 신호는 심볼릭 매칭이지 언어 이해가 아니다(mate family의 UCI 수순은
+   데이터 생성 산물). oracle 상한은 "텍스트→(수,플래그) 추출이 완벽하다"는 조건부 상한.
+
+### 다음 레버 (증거 기반 재우선순위)
+- **1순위: hybrid 텍스트 표현** — 문장 임베딩에 심볼릭 move-mention 특징을 결합(또는 hybrid
+  score). 목표: connector R@50 0.077 → 0.5+ (mention 하한이 이미 0.556). 싸고 즉시 가능.
+- 2순위: text encoder fine-tune(move 토큰 보존 학습) — hybrid가 포화하면.
+- board encoder fine-tune은 후순위로 강등: 벽이 board 쪽이라는 증거가 없다.
+
+## 2026-07-10 — Phase 1 레버 ①: hybrid 심볼릭 특징 connector — Gate 5 통과 (조건부)
+
+### 구현
+- `src/modalchess/align/symbolic_features.py`: board 쪽 (fen,target_move)→[140] (from/to
+  one-hot + 기물 + 전술 플래그; pair 정의의 명시화이지 정답 누출 아님), text 쪽 코멘트
+  원문만 파싱→[333] (UCI/SAN mention multi-hot + 첫-언급 one-hot + 마커). 8 tests.
+- `load_aligned_pairs`에 `features_path`/`feature_mode(hybrid|symbolic_only)` 추가 —
+  임베딩에 concat 또는 심볼릭 단독. train/eval CLI에 override 추가(grid 버그 교훈 반영).
+- config: `configs/connector/connector_hybrid_v1.yaml` (배칭·최적화는 connector_v1과 동일,
+  within-family null 등 평가 장치 전부 동결 재사용).
+
+### 결과 (comment regime 3000행 test, t2b strict)
+| 구성 | MRR | R@10 | R@50 | null(양방향) |
+|---|---|---|---|---|
+| connector_v1 (Gate 4) | 0.0125 | 0.021 | 0.077 | 통과 |
+| mention baseline (무학습, 진단 ①) | 0.0656 | 0.188 | 0.556 | — |
+| **hybrid p128 (3-seed)** | 0.1482±0.0074 | 0.286 | 0.484 | 6/6 통과 |
+| hybrid p256 (3-seed) | 0.1421±0.0085 | 0.279 | 0.476 | (위에 포함) |
+| **symbolic-only (3-seed)** | **0.2795±0.0035** | **0.506** | **0.567** | 3/3 통과 |
+
+b2t: hybrid 0.159±0.010, symbolic-only **0.365±0.004**. 9개 런 전부 global·within-family
+null 양방향 통과, seed 분산 극소.
+
+### per-family (seed11, t2b MRR / R@50)
+| family | connector_v1 | hybrid | symbolic-only |
+|---|---|---|---|
+| mate_both (n=1304) | 0.010 / 0.043 | 0.246 / 0.744 | **0.504 / 1.000** |
+| mate_testset (n=342) | 0.005 / 0.050 | 0.222 / 0.673 | 0.461 / 0.886 |
+| waterhorse (n=605) | 0.013 / 0.101 | **0.030 / 0.169** | 0.011 / 0.069 |
+| gameknot (n=579) | 0.017 / 0.111 | **0.027 / 0.149** | 0.007 / 0.071 |
+
+### 초기 판정(구 sampler) — 이후 재검증으로 일부 뒤집힘
+- 위 표의 초기 실행에서 "naive concat이 심볼릭 채널을 절반으로 희석(0.28→0.145)"으로
+  보였다. **이 발견은 sampler 버그의 산물이었다** (아래 재검증).
+
+### 재검증 — PR #1 리뷰 수정(FamilyBlockedSampler misc-pool 실사용) 반영
+PR #1 머지에 포함된 sampler 수정(79709a3: misc pool이 실제 배치에 들어가고 배치 수 추정
+정확화) 위에서 hybrid p128·symbolic-only 각 3-seed 재실행:
+
+| 구성 (fixed sampler) | t2b MRR | R@10 | R@50 | b2t MRR | null |
+|---|---|---|---|---|---|
+| **hybrid p128 (3-seed)** | **0.4044±0.0151** | **0.579** | **0.660** | 0.4174±0.0114 | 3/3 통과 |
+| symbolic-only (3-seed) | 0.2867±0.0042 | 0.515 | 0.592 | 0.3798±0.0008 | 3/3 통과 |
+
+- symbolic-only는 거의 불변(0.276→0.287)인데 **hybrid가 0.148→0.404로 2.7× 도약**.
+  원인: 구 sampler는 misc pool(소형 family 잔여)을 만들고 배치에 넣지 않아, 문장 임베딩
+  채널이 다양한 in-batch negative를 보지 못했다. 배칭이 고쳐지자 concat fusion이 제대로
+  작동 — "concat 희석" 결론은 기각, **fusion은 배칭이 올바르면 양 채널을 그대로 합성한다**.
+- per-family(seed11, MRR/R@50): mate_both **0.723/1.000**, mate_testset 0.632/0.924,
+  waterhorse 0.080/0.322, gameknot 0.041/0.231, lichess 0.081/0.338 — **전 family에서
+  hybrid가 symbolic-only·connector_v1 모두 상회**. 비언급 세그먼트도 v1 대비 R@50 2~3×.
+
+### 최종 판정: Gate 5 통과 (조건부)
+- ✓ t2b MRR 0.0125 → **0.404 (32×)**, R@50 0.077 → **0.660 (8.6×)** — frozen-probe 대비 37×.
+  전 15개 런(구 9 + 재검증 6) global·within-family null 양방향 통과, seed 분산 소.
+- ✓ 무학습 mention baseline(0.0656/0.556)을 학습이 크게 상회 — mate family는 oracle
+  상한(R@50 1.0) 도달, 첫-언급 가중·플래그 채널을 학습이 회수.
+- **usable top-k 달성**: 전체 pool R@10 58%, move-conditioned 세그먼트 R@50 92~100%.
+- 부수 교훈(방법론): 단일 코드 상태에서의 ablation 결론("concat 희석")도 인프라 버그에
+  기생할 수 있다 — 머지된 수정 위 재검증이 결론을 뒤집었다. 3-seed 프로토콜과 동일한
+  이유로, **결합 방식 비교는 배칭 수정 이후 수치만 유효**.
+- 정직 캐비엇: 이 도약은 **심볼릭 신호의 회수이지 언어 이해의 증명이 아니다**(diag ①의
+  예측대로). 비언급 세그먼트(~43%)는 개선됐지만 여전히 상대적으로 약함(R@50 0.23~0.34)
+  — 진짜 의미 정렬의 남은 전선. 다음 후보: text encoder fine-tune(비언급 세그먼트 표적),
+  더 나은 pair. fusion/rationale/RL은 계속 out of scope.

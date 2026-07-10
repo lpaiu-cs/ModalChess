@@ -96,6 +96,35 @@ mlp+linear). comment regime 3000행 test:
 - 판정: 최소 connector 목적("정렬이 학습으로 real하게 오르는가") 달성 = **예(usable는 아직 아님)**.
   다음 레버(인코더 fine-tune, 더 나은 pair)는 유보. fusion/rationale/RL은 계속 out of scope.
 
+## Phase 1 진단 ① — oracle ceiling (2026-07-10): 데이터 모호성 기각, 병목은 텍스트 표현
+
+Gate 4의 낮은 절대 retrieval이 데이터 벽인지 인코더 벽인지 심볼릭 상한/하한으로 판별
+(`scripts/oracle_ceiling.py`, Gate 4와 동일 pool·strict tie):
+- **oracle 상한(수+플래그를 완벽 전달 가정): 전 family R@50=1.0, R@10 0.91** → pool은 수
+  수준에서 모호하지 않다. **데이터 모호성 가설 기각** (move-conditioned 57.4%에 대해).
+- **무학습 mention baseline(SAN/UCI 문자열 매칭): MRR 0.0656, R@50 0.556** — 학습된 connector
+  (0.0125 / 0.077)를 5.2×/7.2× 압도. **병목 = MiniLM이 move 토큰 식별 정보를 버리는 것.**
+- 캐비엇: mention 신호는 심볼릭이지 언어 이해가 아니며(mate family의 UCI는 생성 산물),
+  move 비언급 ~43%(gameknot·waterhorse)는 이 레버로 구제 불가.
+- **재우선순위**: ① hybrid 텍스트 표현(문장 임베딩+move-mention 특징) → ② text encoder
+  fine-tune → board encoder fine-tune은 근거 없음으로 강등. 상세: [scaleup_log.md](scaleup_log.md).
+
+## Gate 5 (hybrid 심볼릭 특징, 2026-07-10) — 통과 (조건부)
+
+진단 ①의 처방 실행: board (fen,target_move)→심볼릭 벡터[140], text 코멘트 파싱→mention
+벡터[333]을 임베딩에 결합(hybrid) 또는 단독 사용(symbolic-only). 평가 장치 전부 동결 재사용.
+- **hybrid p128 3-seed (fixed sampler): t2b MRR 0.4044±0.0151, R@10 0.579, R@50 0.660,
+  b2t 0.4174** — Gate 4 대비 MRR 32×, R@50 8.6×, frozen-probe 대비 37×.
+  **usable top-k 최초 달성** (move-conditioned 세그먼트 R@50 92~100%, mate는 oracle 상한).
+- symbolic-only 3-seed 0.2867±0.0042 — 무학습 mention baseline(0.0656)을 학습이 4배+ 회수.
+- 전 15개 런 global·within-family null 양방향 통과 — shortcut 아님, 재현적.
+- 방법론 교훈: 초기(구 sampler) 실행에서는 "concat이 심볼릭 채널을 희석"으로 보였으나
+  **PR #1의 sampler 수정(misc-pool 실사용) 위 재검증에서 기각** — hybrid가 전 family에서
+  최선. ablation 결론도 인프라 버그에 기생할 수 있다.
+- 캐비엇: **심볼릭 신호의 회수이지 언어 이해의 증명 아님.** move 비언급 ~43% 세그먼트는
+  개선됐지만 상대적으로 약함(R@50 0.23~0.34) — 의미 정렬의 남은 전선(다음: text encoder
+  fine-tune 표적화, 더 나은 pair). fusion/rationale/RL은 계속 out of scope.
+
 ## 참조
 
 - 결과물(gitignore): `outputs/scale_v1/**` (origin 로컬, robocopy 대피본).

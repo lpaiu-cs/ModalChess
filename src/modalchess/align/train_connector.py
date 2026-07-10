@@ -39,8 +39,15 @@ def train_connector(config: dict[str, Any]) -> dict[str, Any]:
     torch.manual_seed(seed)
 
     pool = config.get("pool", "board_pooled")
-    train_pairs = load_aligned_pairs(config["train_board"], config["train_text"], pool=pool)
-    val_pairs = load_aligned_pairs(config["val_board"], config["val_text"], pool=pool)
+    feature_mode = config.get("feature_mode", "hybrid")
+    train_pairs = load_aligned_pairs(
+        config["train_board"], config["train_text"], pool=pool,
+        features_path=config.get("train_features"), feature_mode=feature_mode,
+    )
+    val_pairs = load_aligned_pairs(
+        config["val_board"], config["val_text"], pool=pool,
+        features_path=config.get("val_features"), feature_mode=feature_mode,
+    )
 
     model_cfg = ConnectorConfig(
         board_dim=train_pairs.board.size(1),
@@ -162,6 +169,7 @@ def train_connector(config: dict[str, Any]) -> dict[str, Any]:
         "model_config": asdict(model_cfg),
         "seed": seed,
         "pool": pool,
+        "feature_mode": feature_mode if config.get("train_features") else "none",
         "best_epoch": best_epoch,
         "config": config,
     }, output_dir / "connector.pt")
