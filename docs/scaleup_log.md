@@ -265,3 +265,45 @@
   (가벼운 인코더 fine-tune, 더 나은 move-conditioned pair)는 계획상 명시적 유보 — 본 단계 범위 밖.
 - **결론**: "정렬이 학습으로 실제 오르는가?"에 **예(단, 아직 usable top-k는 아님)**. 최소 connector의
   목적을 달성했고 fusion/RL은 계속 out of scope.
+
+## 2026-07-10 — Phase 1 진단 ①: oracle ceiling (다음 레버 선정용)
+
+질문: connector의 낮은 절대 retrieval(R@50 ~8%)의 벽이 (A) 인코더인가 (B) 데이터 모호성인가.
+`src/modalchess/align/oracle_ceiling.py` + `scripts/oracle_ceiling.py` (tests 11, strict tie 동일 규칙,
+Gate 4와 동일한 test pool 3000행).
+
+### 결과 (t2b 기준)
+| 측정 | MRR | R@10 | R@50 | 의미 |
+|---|---|---|---|---|
+| duplicate ceiling (상한) | 0.987 | 0.993 | 1.000 | 정확 중복은 벽이 아님 |
+| oracle: move+flags (상한) | 0.576 | 0.912 | **1.000** | 수를 알면 pool 모호성 없음 |
+| oracle: uci_exact (상한) | 0.345 | 0.840 | 1.000 | 수 단독으로도 top-10 84% |
+| oracle: flags_only (상한) | 0.021 | 0.023 | 0.202 | generic 정보만으론 진짜 벽 |
+| **mention baseline (하한, 무학습)** | **0.0656** | 0.188 | **0.556** | SAN/UCI 문자열 매칭만으로 |
+| connector G3 (Gate 4 실측) | 0.0125 | 0.021 | 0.077 | |
+
+- **move_conditioned_fraction = 57.4%** (자기 코멘트에 자기 수의 SAN/UCI가 등장하는 pair 비율).
+  family별: mate_both 100%, mate_testset 88.6%, gameknot 11.6%, waterhorse ~3.6%, lichess 15.6%.
+- mention baseline family별 R@50: mate_both **0.992**, mate_testset 0.883 vs gameknot 0.078,
+  waterhorse 0.013 — move-conditioned 여부가 정확히 가른다.
+- oracle(move+flags)은 **전 family에서 R@50=1.0, R@10 0.75~0.96** — pool 자체는 어느 family도
+  수 수준에서 모호하지 않다.
+- 부수 발견: test pool 3000행 전부 informativeness_bucket=high (corpus가 이미 high-threshold
+  variant) → "informative-only 서브셋" 실험(진단 ②)은 이 pool에선 headroom이 없어 무의미.
+
+### 판정
+1. **가설 B(데이터 모호성) 기각** — 적어도 move-conditioned 57.4%에 대해. oracle 상한이 전
+   family에서 R@50=1.0이므로 데이터가 벽이 아니다.
+2. **진짜 병목 = 텍스트 표현이 move 토큰의 식별 정보를 버림**: 무학습 문자열 매칭이 학습된
+   전체 스택을 MRR 5.2×, R@50 7.2× 압도한다. MiniLM은 의미 인코더라 "d3h7" vs "d3d8"을
+   사실상 구분하지 못하고, 이 corpus의 지배적 정렬 신호(literal move 언급)를 통째로 잃는다.
+3. 남은 ~43%(gameknot·waterhorse 등 move 비언급 pair)는 mention으로 구제 불가 — 이쪽만이
+   "더 나은 pair" 레버의 실제 적용 대상.
+4. 정직 캐비엇: mention 신호는 심볼릭 매칭이지 언어 이해가 아니다(mate family의 UCI 수순은
+   데이터 생성 산물). oracle 상한은 "텍스트→(수,플래그) 추출이 완벽하다"는 조건부 상한.
+
+### 다음 레버 (증거 기반 재우선순위)
+- **1순위: hybrid 텍스트 표현** — 문장 임베딩에 심볼릭 move-mention 특징을 결합(또는 hybrid
+  score). 목표: connector R@50 0.077 → 0.5+ (mention 하한이 이미 0.556). 싸고 즉시 가능.
+- 2순위: text encoder fine-tune(move 토큰 보존 학습) — hybrid가 포화하면.
+- board encoder fine-tune은 후순위로 강등: 벽이 board 쪽이라는 증거가 없다.
