@@ -115,6 +115,7 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
               device: torch.device) -> dict[str, Any]:
     seed = int(config["seed"])
     torch.manual_seed(seed)
+    Path(config["output_dir"]).mkdir(parents=True, exist_ok=True)  # 체크포인트 저장 대상 디렉터리
     assembler = SequenceAssembler(tokenizer, inject=arm.kind != "fen_zs",
                                   fen_text=arm.uses_fen_text)
     train_items = load_qa_items(Path(config["qa_dir"]) / "qa_train.jsonl",
