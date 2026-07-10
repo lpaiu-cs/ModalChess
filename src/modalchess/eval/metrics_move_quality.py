@@ -94,6 +94,8 @@ def collect_move_prediction_rows(
     rows: list[dict[str, object]] = []
     max_topk = max(topk) if topk else 1
     for index, legal_moves in enumerate(batch["legal_moves_factorized"]):
+        # pin_memory 경유 시 torch가 tuple을 list로 바꾸므로 tuple로 정규화한다.
+        legal_moves = [tuple(move) for move in legal_moves]
         target_move = batch["target_move_uci"][index]
         if target_move is None or not legal_moves:
             continue

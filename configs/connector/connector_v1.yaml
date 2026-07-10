@@ -1,0 +1,40 @@
+# connector_v1: frozen Tier M board(G3) + frozen MiniLM text, multi-positive InfoNCE
+# 경로는 CLI --output-dir 등으로 override. board 임베딩은 gate2_comment export 재사용,
+# text 임베딩은 scripts/precompute_connector_text.py로 먼저 생성.
+seed: 11
+pool: board_pooled
+output_dir: outputs/connector_v1/g3/seed11
+
+# precompute된 임베딩 (G3 seed11 기준; 다른 backbone/seed는 override)
+train_board: outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_train_embeddings.pt
+val_board:   outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_val_embeddings.pt
+test_board:  outputs/scale_v1/gate2_comment/embedding_exports/g3/seed11/annotated_sidecar_test_embeddings.pt
+train_text:  outputs/connector_v1/text_embeddings/annotated_sidecar_train_text.pt
+val_text:    outputs/connector_v1/text_embeddings/annotated_sidecar_val_text.pt
+test_text:   outputs/connector_v1/text_embeddings/annotated_sidecar_test_text.pt
+
+# connector
+projection: mlp          # {linear, mlp}
+proj_dim: 128
+hidden_dim: 512
+dropout: 0.1
+learnable_temperature: true
+init_temperature: 0.07
+
+# 배칭: family_blocked (within-family hard negatives 보장)
+balance: family_blocked  # {family_blocked, none}
+families_per_batch: 16
+samples_per_family: 4     # m>=2
+multi_positive: true
+
+# 최적화
+epochs: 40
+learning_rate: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+early_stop_patience: 6
+batch_size: 512           # balance=none일 때만 사용
+
+# 평가 null
+null_repeats: 50
+null_seed: 20260710

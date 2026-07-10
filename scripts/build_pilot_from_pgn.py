@@ -23,7 +23,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-version", default=None, help="원천 버전 문자열")
     parser.add_argument("--source-date", default=None, help="원천 날짜 문자열")
     parser.add_argument("--rated-only", action="store_true", help="rated game만 유지")
+    parser.add_argument(
+        "--min-rating",
+        type=int,
+        default=None,
+        help="양쪽 플레이어 Elo가 이 값 이상인 game만 유지 (rating 헤더 없으면 탈락)",
+    )
     parser.add_argument("--allow-variants", action="store_true", help="variant game도 허용")
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="history_fens를 기록하지 않는다 (H=1 학습에서 파일 크기/로드 비용 절감)",
+    )
     parser.add_argument("--emit-legal-moves", action="store_true", help="debug용 legal_moves_uci를 기록")
     parser.add_argument("--min-game-plies", type=int, default=1, help="최소 game ply 수")
     parser.add_argument("--max-game-plies", type=int, default=None, help="최대 game ply 수")
@@ -57,6 +68,8 @@ def main() -> None:
         source_date=args.source_date,
         standard_only=not args.allow_variants,
         rated_only=args.rated_only,
+        min_rating=args.min_rating,
+        include_history=not args.no_history,
         emit_legal_moves=args.emit_legal_moves,
         min_game_plies=args.min_game_plies,
         max_game_plies=args.max_game_plies,

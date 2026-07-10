@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from functools import partial
 import json
 from pathlib import Path
 import subprocess
@@ -15,10 +16,14 @@ from torch.utils.data import DataLoader
 from modalchess.data.collators import collate_position_samples
 from modalchess.data.dataset_builder import DatasetBuildConfig, build_dataset
 from modalchess.data.fen_tokenizer import FenTokenizer
-from modalchess.eval.pipeline import build_eval_dataloader, evaluate_model_on_dataloader
+from modalchess.eval.pipeline import (
+    build_eval_dataloader,
+    evaluate_model_on_dataloader,
+    resolve_dataloader_workers,
+)
 from modalchess.models.fen_baseline import FenPolicyBaselineModel
 from modalchess.models.modalchess_core import ModalChessCoreModel
-from modalchess.train.optim import build_optimizer
+from modalchess.train.optim import build_lr_scheduler, build_optimizer
 from modalchess.train.trainer import Trainer
 from modalchess.utils.config import (
     deep_merge_dict,
@@ -113,6 +118,7 @@ def _build_train_dataloader(
     batch_size: int,
     concept_vocab: list[str],
     fen_max_length: int | None,
+    loader_options: dict[str, Any] | None = None,
 ) -> tuple[object, DataLoader]:
     dataset = build_dataset(dataset_config)
     if len(dataset) == 0:
@@ -121,11 +127,12 @@ def _build_train_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=lambda samples: collate_position_samples(
-            samples,
+        collate_fn=partial(
+            collate_position_samples,
             concept_vocab=concept_vocab,
             fen_max_length=fen_max_length,
         ),
+        **resolve_dataloader_workers(loader_options),
     )
     return dataset, dataloader
 
@@ -272,11 +279,17 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     val_dataset_section = _resolve_dataset_section(config, "val_dataset", fallback_split="val")
 
     batch_size = int(config["train"]["batch_size"])
+    loader_options = {
+        key: config["train"][key]
+        for key in ("num_workers", "pin_memory", "persistent_workers", "prefetch_factor")
+        if key in config["train"]
+    }
     train_dataset, train_dataloader = _build_train_dataloader(
         train_dataset_config,
         batch_size=batch_size,
         concept_vocab=concept_vocab,
         fen_max_length=fen_max_length,
+        loader_options=loader_options,
     )
     val_dataset = None
     val_dataloader = None
@@ -289,6 +302,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
             concept_vocab=concept_vocab,
             fen_max_length=fen_max_length,
             shuffle=False,
+            loader_options=loader_options,
         )
 
     model = build_model_from_config(model_config)
@@ -298,6 +312,12 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         learning_rate=float(config["train"]["learning_rate"]),
         weight_decay=float(config["train"]["weight_decay"]),
     )
+    total_scheduled_steps = int(config["train"]["epochs"]) * len(train_dataloader)
+    lr_scheduler = build_lr_scheduler(
+        optimizer,
+        config["train"].get("lr_schedule"),
+        total_steps=total_scheduled_steps,
+    )
     device = resolve_device()
     trainer = Trainer(
         model=model,
@@ -305,6 +325,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         loss_weights=config.get("losses", {}),
         device=device,
         grad_clip_norm=config["train"].get("grad_clip_norm"),
+        lr_scheduler=lr_scheduler,
     )
 
     output_dir = Path(config.get("output_dir", "outputs/train"))
@@ -332,6 +353,13 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     validation_topk = list(config.get("metrics", {}).get("topk", [1, 3, 5]))
     grounding_selection_enabled = val_dataloader is not None
     best_grounding_metrics: dict[str, object] | None = None
+    early_stop_patience = config["train"].get("early_stop_patience")
+    if early_stop_patience is not None:
+        early_stop_patience = int(early_stop_patience)
+        if val_dataloader is None:
+            raise ValueError("early_stop_patience에는 validation 데이터셋이 필요하다.")
+    epochs_without_policy_improvement = 0
+    early_stopped_at_epoch: int | None = None
 
     for epoch_index in range(epochs):
         train_metrics = trainer.train_epoch(train_dataloader)
@@ -352,6 +380,7 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
                 best_policy_value = current_policy_value
                 best_epoch = epoch_index + 1
                 best_metrics = val_metrics
+                epochs_without_policy_improvement = 0
                 policy_payload = _build_checkpoint_payload(
                     trainer.model,
                     optimizer,
@@ -365,6 +394,8 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
                 )
                 torch.save(policy_payload, best_checkpoint_path)
                 torch.save(policy_payload, best_policy_checkpoint_path)
+            else:
+                epochs_without_policy_improvement += 1
             if grounding_selection_enabled:
                 current_grounding_value = _compute_grounding_score(val_metrics)
                 epoch_record["grounding_score"] = current_grounding_value
@@ -387,6 +418,12 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
                         best_grounding_checkpoint_path,
                     )
         epoch_metrics.append(epoch_record)
+        if (
+            early_stop_patience is not None
+            and epochs_without_policy_improvement >= early_stop_patience
+        ):
+            early_stopped_at_epoch = epoch_index + 1
+            break
 
     torch.save(
         _build_checkpoint_payload(
@@ -493,6 +530,9 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
     metrics = {
         "epoch_metrics": epoch_metrics,
         "overfit_metrics": overfit_metrics,
+        "early_stopped_at_epoch": early_stopped_at_epoch,
+        "early_stop_patience": early_stop_patience,
+        "total_scheduled_steps": total_scheduled_steps,
         "best_checkpoint_path": str(best_checkpoint_path),
         "last_checkpoint_path": str(last_checkpoint_path),
         "checkpoint_path": str(best_checkpoint_path),
@@ -528,6 +568,8 @@ def run_training(config: dict[str, Any]) -> dict[str, Any]:
         "selection_metric": policy_selection_metric,
         "policy_best_epoch": best_epoch,
         "grounding_best_epoch": grounding_best_epoch,
+        "early_stopped_at_epoch": early_stopped_at_epoch,
+        "early_stop_patience": early_stop_patience,
         "policy_selection_metric": policy_selection_metric,
         "grounding_selection_metric": grounding_selection_metric,
         "grounding_score": None if grounding_best_epoch is None else float(best_grounding_value),

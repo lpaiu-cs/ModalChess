@@ -548,9 +548,11 @@ def run_raw_text_retrieval_probes(
     families: list[str] | None = None,
     probe_models: list[str] | None = None,
     output_prefix: str = "raw_text_retrieval",
+    backbones: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run raw-text/synthetic-tag retrieval probes on frozen embeddings."""
     seed_list = backbone_seeds or [11, 17, 23]
+    backbone_list = tuple(backbones) if backbones else ("g1", "g3")
     embedding_root_path = Path(embedding_root)
     corpus_root_path = Path(corpus_root)
     output_root = Path(output_dir)
@@ -611,7 +613,7 @@ def run_raw_text_retrieval_probes(
             for split_name in ("train", "val", "test")
         }
         breakdown_groups = _breakdown_index_groups(aligned_rows_by_split["test"]) if family == "annotated_sidecar" else {}
-        for backbone_name in ("g1", "g3"):
+        for backbone_name in backbone_list:
             for seed in seed_list:
                 embedding_dir = embedding_root_path / backbone_name / f"seed{seed}"
                 embedding_payloads = {

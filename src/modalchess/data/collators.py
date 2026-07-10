@@ -117,6 +117,19 @@ def collate_position_samples(
         subset_en_passant.append(any(board.is_en_passant(move) for move in board.legal_moves))
         subset_check_evasion.append(board.is_check())
 
+    max_legal_moves = max((len(moves) for moves in legal_moves_factorized), default=0)
+    padded_shape = (len(samples), max(max_legal_moves, 1))
+    legal_move_src = torch.zeros(padded_shape, dtype=torch.long)
+    legal_move_dst = torch.zeros(padded_shape, dtype=torch.long)
+    legal_move_promo = torch.zeros(padded_shape, dtype=torch.long)
+    legal_move_mask = torch.zeros(padded_shape, dtype=torch.bool)
+    for sample_index, moves in enumerate(legal_moves_factorized):
+        for move_index, (src_square, dst_square, promotion) in enumerate(moves):
+            legal_move_src[sample_index, move_index] = src_square
+            legal_move_dst[sample_index, move_index] = dst_square
+            legal_move_promo[sample_index, move_index] = promotion
+            legal_move_mask[sample_index, move_index] = True
+
     return {
         "position_ids": [sample.position_id for sample in samples],
         "game_ids": [sample.game_id for sample in samples],
@@ -128,6 +141,10 @@ def collate_position_samples(
         "fen_attention_mask": fen_attention_mask,
         "legal_moves_uci": [sample.legal_moves_uci for sample in samples],
         "legal_moves_factorized": legal_moves_factorized,
+        "legal_move_src": legal_move_src,
+        "legal_move_dst": legal_move_dst,
+        "legal_move_promo": legal_move_promo,
+        "legal_move_mask": legal_move_mask,
         "target_move_uci": [sample.target_move_uci for sample in samples],
         "src_targets": torch.tensor(src_targets, dtype=torch.long),
         "dst_targets": torch.tensor(dst_targets, dtype=torch.long),

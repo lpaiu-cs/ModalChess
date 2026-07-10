@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import torch
@@ -16,12 +17,32 @@ from modalchess.utils.config import deep_merge_dict
 from modalchess.utils.device import autocast_context, resolve_device
 
 
+def resolve_dataloader_workers(loader_options: dict[str, Any] | None) -> dict[str, Any]:
+    """DataLoader worker 관련 kwargs를 구성한다.
+
+    collate_fn은 Windows spawn 피클을 위해 lambda가 아니라 `functools.partial`이어야 한다.
+    """
+    options = loader_options or {}
+    num_workers = int(options.get("num_workers", 0))
+    kwargs: dict[str, Any] = {
+        "num_workers": num_workers,
+        "pin_memory": bool(options.get("pin_memory", False)),
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(options.get("persistent_workers", True))
+        prefetch_factor = options.get("prefetch_factor")
+        if prefetch_factor is not None:
+            kwargs["prefetch_factor"] = int(prefetch_factor)
+    return kwargs
+
+
 def build_eval_dataloader(
     dataset_config: DatasetBuildConfig,
     batch_size: int,
     concept_vocab: list[str],
     fen_max_length: int | None = None,
     shuffle: bool = False,
+    loader_options: dict[str, Any] | None = None,
 ) -> tuple[object, DataLoader]:
     """평가용 데이터셋과 DataLoader를 함께 생성한다."""
     dataset = build_dataset(dataset_config)
@@ -31,11 +52,12 @@ def build_eval_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        collate_fn=lambda samples: collate_position_samples(
-            samples,
+        collate_fn=partial(
+            collate_position_samples,
             concept_vocab=concept_vocab,
             fen_max_length=fen_max_length,
         ),
+        **resolve_dataloader_workers(loader_options),
     )
     return dataset, dataloader
 

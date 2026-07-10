@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from array import array
 from dataclasses import dataclass
 import json
 import random
 from pathlib import Path
+from typing import IO, Any
 
 import chess
 from torch.utils.data import Dataset
@@ -33,6 +35,8 @@ class DatasetBuildConfig:
     split_field: str | None = None
     require_repetition_count: bool = False
     allow_position_level_split: bool = False
+    loading: str = "eager"
+    validate_sample_rate: float = 1.0
 
 
 class FixtureDataset(Dataset[PositionSample]):
@@ -249,6 +253,52 @@ def _validate_explicit_split_records(
         )
 
 
+def record_to_position_sample(
+    record: dict[str, Any],
+    config: DatasetBuildConfig,
+    validate: bool = True,
+) -> PositionSample:
+    """JSONL 레코드 하나를 PositionSample로 변환한다 (eager/lazy 공용 경로)."""
+    fen = record["fen"]
+    history_fens = record.get("history_fens") or [fen]
+    board_state = fen_to_board_state(fen)
+    board = board_state_to_board(board_state)
+    computed_legal_moves_uci = [move.uci() for move in board.legal_moves]
+    provided_legal_moves_uci = record.get("legal_moves_uci")
+    if provided_legal_moves_uci is not None:
+        if (
+            len(provided_legal_moves_uci) != len(computed_legal_moves_uci)
+            or set(provided_legal_moves_uci) != set(computed_legal_moves_uci)
+        ):
+            raise ValueError(
+                "legal_moves_uci가 python-chess 합법 수 집합과 일치하지 않는다: "
+                f"{record['position_id']}"
+            )
+    sample = PositionSample(
+        position_id=record["position_id"],
+        game_id=record.get("game_id"),
+        fen=fen,
+        history_fens=history_fens,
+        board_planes=encode_fen_history(history_fens, history_length=config.history_length),
+        legal_moves_uci=computed_legal_moves_uci,
+        board_state=board_state,
+        target_move_uci=record.get("target_move_uci"),
+        next_fen=record.get("next_fen"),
+        concept_tags=record["concept_tags"] if "concept_tags" in record else None,
+        engine_eval_cp=record.get("engine_eval_cp"),
+    )
+    repetition_count_present = "repetition_count" in record
+    if repetition_count_present:
+        sample.board_state.meta.repetition_count = int(record["repetition_count"])
+    if validate:
+        validate_position_sample(
+            sample,
+            require_repetition_count=config.require_repetition_count,
+            repetition_count_present=repetition_count_present,
+        )
+    return sample
+
+
 def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     """JSONL 기반 실제 연구 데이터 샘플을 생성한다."""
     if config.dataset_path is None:
@@ -259,45 +309,7 @@ def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     if split_field is not None:
         _validate_explicit_split_records(records, split_field, config)
         records = _filter_records_by_split_field(records, split_field, config.split)
-    samples: list[PositionSample] = []
-    for record in records:
-        fen = record["fen"]
-        history_fens = record.get("history_fens") or [fen]
-        board_state = fen_to_board_state(fen)
-        board = board_state_to_board(board_state)
-        computed_legal_moves_uci = [move.uci() for move in board.legal_moves]
-        provided_legal_moves_uci = record.get("legal_moves_uci")
-        if provided_legal_moves_uci is not None:
-            if (
-                len(provided_legal_moves_uci) != len(computed_legal_moves_uci)
-                or set(provided_legal_moves_uci) != set(computed_legal_moves_uci)
-            ):
-                raise ValueError(
-                    "legal_moves_uci가 python-chess 합법 수 집합과 일치하지 않는다: "
-                    f"{record['position_id']}"
-                )
-        sample = PositionSample(
-            position_id=record["position_id"],
-            game_id=record.get("game_id"),
-            fen=fen,
-            history_fens=history_fens,
-            board_planes=encode_fen_history(history_fens, history_length=config.history_length),
-            legal_moves_uci=computed_legal_moves_uci,
-            board_state=board_state,
-            target_move_uci=record.get("target_move_uci"),
-            next_fen=record.get("next_fen"),
-            concept_tags=record["concept_tags"] if "concept_tags" in record else None,
-            engine_eval_cp=record.get("engine_eval_cp"),
-        )
-        repetition_count_present = "repetition_count" in record
-        if repetition_count_present:
-            sample.board_state.meta.repetition_count = int(record["repetition_count"])
-        validate_position_sample(
-            sample,
-            require_repetition_count=config.require_repetition_count,
-            repetition_count_present=repetition_count_present,
-        )
-        samples.append(sample)
+    samples = [record_to_position_sample(record, config) for record in records]
     if split_field is None:
         samples = _split_by_game_id(samples, config)
     if config.limit is not None:
@@ -305,12 +317,173 @@ def build_jsonl_samples(config: DatasetBuildConfig) -> list[PositionSample]:
     return samples
 
 
-def build_jsonl_dataset(config: DatasetBuildConfig) -> FixtureDataset:
+def _validation_stride(validate_sample_rate: float) -> int | None:
+    """표본 검증 rate를 결정적 stride로 바꾼다. None이면 검증하지 않는다."""
+    if validate_sample_rate <= 0.0:
+        return None
+    if validate_sample_rate >= 1.0:
+        return 1
+    return max(1, round(1.0 / validate_sample_rate))
+
+
+class LazyJsonlDataset(Dataset[PositionSample]):
+    """바이트 offset 인덱스만 메모리에 두고 `__getitem__`에서 인코딩하는 JSONL 데이터셋.
+
+    - 초기 스캔 1회로 split hygiene 검증과 offset 수집을 수행한다.
+    - 샘플 인코딩(planes/합법수)은 접근 시점에 이뤄지므로 DataLoader worker로 병렬화된다.
+    - 전수 샘플 검증은 하지 않는다. `validate_sample_rate`에 따라 스캔 시점에
+      결정적 stride로 표본만 full 검증한다 (전수 검증은 JSONL 빌드 단계 책임).
+    - Windows spawn worker에는 offset 배열만 피클되며 파일 핸들은 worker별로 다시 연다.
+    """
+
+    def __init__(self, config: DatasetBuildConfig) -> None:
+        if config.dataset_path is None:
+            raise ValueError("JSONL 데이터셋에는 dataset_path가 필요하다.")
+        self.config = config
+        self.dataset_path = Path(config.dataset_path)
+        self._handle: IO[bytes] | None = None
+        self._offsets = self._scan_and_validate()
+        if config.limit is not None:
+            self._offsets = self._offsets[: config.limit]
+
+    def _scan_and_validate(self) -> array:
+        config = self.config
+        supported_splits = {"train", "val", "test"}
+        offsets = array("q")
+        game_keys: list[str] = []
+        record_splits: list[str] = []
+        game_id_to_splits: dict[str, set[str]] = {}
+        split_present_count = 0
+        total_records = 0
+        missing_game_id = False
+        validation_stride = _validation_stride(config.validate_sample_rate)
+        forced_split_field = config.split_field
+
+        with self.dataset_path.open("rb") as handle:
+            while True:
+                offset = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                position_id = str(record.get("position_id", "<unknown>"))
+                split_field = forced_split_field or "split"
+                has_split = split_field in record
+                split_present_count += int(has_split)
+                total_records += 1
+                game_id = record.get("game_id")
+                if game_id is None:
+                    missing_game_id = True
+                game_key = str(game_id) if game_id is not None else position_id
+                record_split = ""
+                if has_split:
+                    record_split = str(record[split_field])
+                    if record_split not in supported_splits:
+                        raise ValueError(
+                            f"{split_field} 값은 train/val/test 중 하나여야 한다: "
+                            f"{position_id} / {record_split}"
+                        )
+                    if not config.allow_position_level_split and game_id is not None:
+                        game_id_to_splits.setdefault(game_key, set()).add(record_split)
+                elif forced_split_field is not None:
+                    raise ValueError(
+                        f"{forced_split_field} 필드가 누락된 JSONL 레코드가 있다: {position_id}"
+                    )
+                if validation_stride is not None and (total_records - 1) % validation_stride == 0:
+                    record_to_position_sample(record, config, validate=True)
+                offsets.append(offset)
+                game_keys.append(game_key)
+                record_splits.append(record_split)
+
+        if 0 < split_present_count < total_records:
+            raise ValueError("split 필드는 모든 JSONL 레코드에 일관되게 존재해야 한다.")
+        has_explicit_split = split_present_count == total_records and total_records > 0
+
+        if has_explicit_split:
+            if missing_game_id and not config.allow_position_level_split:
+                raise ValueError(
+                    "explicit split hygiene에는 모든 샘플의 game_id가 필요하다. "
+                    "position 단위 분할이 필요하면 allow_position_level_split=true를 명시해야 한다."
+                )
+            conflicting_game_ids = [
+                f"{game_id}({','.join(sorted(split_names))})"
+                for game_id, split_names in sorted(game_id_to_splits.items())
+                if len(split_names) > 1
+            ]
+            if conflicting_game_ids:
+                conflict_preview = ", ".join(conflicting_game_ids[:5])
+                raise ValueError(
+                    "explicit split hygiene를 위반했다. 같은 game_id가 여러 split에 걸쳐 나타난다: "
+                    f"{conflict_preview}"
+                )
+            if config.split == "all":
+                return offsets
+            if config.split not in supported_splits:
+                raise ValueError(f"지원하지 않는 split: {config.split}")
+            filtered = array("q")
+            for offset, record_split in zip(offsets, record_splits):
+                if record_split == config.split:
+                    filtered.append(offset)
+            return filtered
+
+        # explicit split이 없으면 eager 경로와 동일한 game-id ratio split을 적용한다.
+        if config.split != "all" and not config.allow_position_level_split and missing_game_id:
+            raise ValueError(
+                "game-level split에는 모든 샘플의 game_id가 필요하다. "
+                "position 단위 분할이 필요하면 allow_position_level_split=true를 명시해야 한다."
+            )
+        unique_ids = sorted(set(game_keys))
+        rng = random.Random(config.split_seed)
+        rng.shuffle(unique_ids)
+        train_cut = int(len(unique_ids) * config.train_ratio)
+        val_cut = train_cut + int(len(unique_ids) * config.val_ratio)
+        split_to_ids = {
+            "train": set(unique_ids[:train_cut]),
+            "val": set(unique_ids[train_cut:val_cut]),
+            "test": set(unique_ids[val_cut:]),
+            "all": set(unique_ids),
+        }
+        selected_ids = split_to_ids.get(config.split)
+        if selected_ids is None:
+            raise ValueError(f"지원하지 않는 split: {config.split}")
+        filtered = array("q")
+        for offset, game_key in zip(offsets, game_keys):
+            if game_key in selected_ids:
+                filtered.append(offset)
+        return filtered
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(self.__dict__)
+        state["_handle"] = None
+        return state
+
+    def _file(self) -> IO[bytes]:
+        if self._handle is None:
+            self._handle = self.dataset_path.open("rb")
+        return self._handle
+
+    def __len__(self) -> int:
+        return len(self._offsets)
+
+    def __getitem__(self, index: int) -> PositionSample:
+        handle = self._file()
+        handle.seek(self._offsets[index])
+        record = json.loads(handle.readline())
+        return record_to_position_sample(record, self.config, validate=False)
+
+
+def build_jsonl_dataset(config: DatasetBuildConfig) -> Dataset[PositionSample]:
     """JSONL 샘플을 torch Dataset으로 감싼다."""
+    if config.loading == "lazy":
+        return LazyJsonlDataset(config)
+    if config.loading != "eager":
+        raise ValueError(f"지원하지 않는 loading 모드: {config.loading}")
     return FixtureDataset(build_jsonl_samples(config))
 
 
-def build_dataset(config: DatasetBuildConfig) -> FixtureDataset:
+def build_dataset(config: DatasetBuildConfig) -> Dataset[PositionSample]:
     """데이터 소스에 따라 학습/평가용 데이터셋을 생성한다."""
     if config.source == "fixture":
         return build_fixture_dataset(config)

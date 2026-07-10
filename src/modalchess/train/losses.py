@@ -16,13 +16,16 @@ def _cross_entropy_or_zero(logits: torch.Tensor, targets: torch.Tensor) -> torch
     return F.cross_entropy(logits, targets, ignore_index=-100)
 
 
-def _listwise_policy_loss(
+def _listwise_policy_loss_loop(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, Any],
 ) -> torch.Tensor:
+    """per-sample 루프 기반 참조 구현. 패킹 텐서가 없는 배치의 fallback."""
     losses: list[torch.Tensor] = []
     target_indices = batch["target_legal_move_index"]
     for sample_index, legal_moves in enumerate(batch["legal_moves_factorized"]):
+        # pin_memory 경유 시 torch가 tuple을 list로 바꾸므로 tuple로 정규화한다.
+        legal_moves = [tuple(move) for move in legal_moves]
         target_index = int(target_indices[sample_index].item())
         if target_index < 0 or not legal_moves:
             continue
@@ -43,6 +46,39 @@ def _listwise_policy_loss(
     if not losses:
         return outputs["src_logits"].sum() * 0.0
     return torch.stack(losses).mean()
+
+
+def _listwise_policy_loss(
+    outputs: dict[str, torch.Tensor],
+    batch: dict[str, Any],
+) -> torch.Tensor:
+    """합법 수 집합 위 listwise CE. 패킹 텐서가 있으면 배치 단위로 벡터화한다.
+
+    점수 공식은 `score_factorized_moves`와 동일하다:
+    score(u→v,p) = src[u] + dst[v] + promo[p] (+ pair[u,v])
+    """
+    if "legal_move_src" not in batch:
+        return _listwise_policy_loss_loop(outputs, batch)
+    legal_src = batch["legal_move_src"]
+    legal_dst = batch["legal_move_dst"]
+    legal_promo = batch["legal_move_promo"]
+    legal_mask = batch["legal_move_mask"]
+    target_indices = batch["target_legal_move_index"]
+    valid = (target_indices >= 0) & legal_mask.any(dim=1)
+    if not bool(valid.any()):
+        return outputs["src_logits"].sum() * 0.0
+    # 점수 합산은 fp32로 고정한다. pair 로짓은 listwise CE 외에 제약이 없어 크기가
+    # 자랄 수 있고, bf16 정밀도에서는 큰 로짓의 gather+add가 기울기를 오염시킨다.
+    scores = (
+        outputs["src_logits"].float().gather(1, legal_src)
+        + outputs["dst_logits"].float().gather(1, legal_dst)
+        + outputs["promo_logits"].float().gather(1, legal_promo)
+    )
+    if "pair_logits" in outputs:
+        pair_flat = outputs["pair_logits"].float().reshape(outputs["pair_logits"].shape[0], 64 * 64)
+        scores = scores + pair_flat.gather(1, legal_src * 64 + legal_dst)
+    scores = scores.masked_fill(~legal_mask, float("-inf"))
+    return F.cross_entropy(scores[valid], target_indices[valid])
 
 
 def _weighted_legality_loss(
