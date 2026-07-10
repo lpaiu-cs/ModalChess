@@ -7,7 +7,8 @@ encoder_checkpoint: outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_mo
 output_dir: outputs/phase2/p1_v1
 
 # 학습 (전 arm 공통 — arm별 lr 스윕 금지, plan §7)
-batch_size: 16
+batch_size: 16          # 유효 배치 (전 arm 동일)
+micro_batch_size: 8     # grad accumulation 단위 — 유효 배치 16 유지, FEN 긴 시퀀스 메모리 대응
 eval_batch_size: 48
 lr: 0.001
 weight_decay: 0.01

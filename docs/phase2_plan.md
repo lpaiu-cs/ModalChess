@@ -150,6 +150,12 @@ C1 성공의 공식 문구는 "지각 배선"이지 "이해"가 아니다. T1은
   {0,1,2,3+} → **{0,1,2 or more}**. 사유: 3+ 클래스는 승격(promotion) 의존이라 실전
   데이터에서 균형 ±2pt 충전이 구조적으로 불가(가용성 분석에 의한 사전 수정, 결과 무관).
 
+- **개정 2** (P1 스크리닝 중, board arm 완료 후·나머지 arm 결과 열람 전): FEN 텍스트 arm의
+  긴 시퀀스로 학습 어텐션 메모리가 O(len²)로 커져 VRAM 오버플로(44GB, shared 스필).
+  **micro_batch_size=8 + grad accumulation 도입, 유효 배치는 16 그대로 유지.** LayerNorm은
+  배치 독립·LM은 동결이라 micro-batch는 그래디언트 평균 단위에만 영향 → board arm(micro=16,
+  이미 완료)과 수치적으로 동등, 재실행 불필요. 판정 대상 수치(유효 배치·lr·epochs) 불변.
+
 ## 10. 예산 추정
 
 - QA 생성: CPU 수 분~수십 분. P1 학습: arm당 seed당 ~1.5h (RTX 5090, 4B frozen,

@@ -129,6 +129,10 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
     optimizer = torch.optim.AdamW(params, lr=float(config.get("lr", 1e-3)),
                                   weight_decay=float(config.get("weight_decay", 0.01)))
     batch_size = int(config.get("batch_size", 16))
+    # micro_batch_size < batch_size면 gradient accumulation으로 유효 배치를 유지한다
+    # (FEN 텍스트 arm은 시퀀스가 길어 어텐션 메모리가 O(len^2)로 커짐 — micro를 줄여 대응).
+    micro_batch = int(config.get("micro_batch_size", batch_size))
+    micro_batch = max(1, min(micro_batch, batch_size))
     epochs = int(config.get("epochs", 2))
     steps_per_epoch = math.ceil(len(train_items) / batch_size)
     total_steps = epochs * steps_per_epoch
@@ -181,21 +185,28 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
         epoch_loss, n_batches = 0.0, 0
         for start in range(0, len(order), batch_size):
             batch_items = [train_items[i] for i in order[start : start + batch_size]]
-            answers = [it["answer"] for it in batch_items]
-            assembled = assembler.build(batch_items, answers, device)
-            arm_inputs = (board_batch(batch_items, history_length)
-                          if arm.uses_board_planes else {})
             for group in optimizer.param_groups:
                 group["lr"] = lr_at(global_step)
-            embeds = _forward_embeds(model, embed_layer, assembled, arm, arm_inputs, device)
-            out = model(inputs_embeds=embeds,
-                        attention_mask=assembled["attention_mask"],
-                        labels=assembled["labels"])
             optimizer.zero_grad(set_to_none=True)
-            out.loss.backward()
+            # 유효 배치를 micro-batch로 쪼개 누적(grad accumulation). loss를 micro 수로
+            # 나눠 backward → 그래디언트 합은 full-batch 평균과 동등, 메모리는 micro 크기.
+            micro_chunks = list(range(0, len(batch_items), micro_batch))
+            batch_loss = 0.0
+            for ms in micro_chunks:
+                micro_items = batch_items[ms : ms + micro_batch]
+                answers = [it["answer"] for it in micro_items]
+                assembled = assembler.build(micro_items, answers, device)
+                arm_inputs = (board_batch(micro_items, history_length)
+                              if arm.uses_board_planes else {})
+                embeds = _forward_embeds(model, embed_layer, assembled, arm, arm_inputs, device)
+                out = model(inputs_embeds=embeds,
+                            attention_mask=assembled["attention_mask"],
+                            labels=assembled["labels"])
+                (out.loss / len(micro_chunks)).backward()
+                batch_loss += float(out.loss.detach())
             torch.nn.utils.clip_grad_norm_(params, float(config.get("grad_clip", 1.0)))
             optimizer.step()
-            epoch_loss += float(out.loss.detach())
+            epoch_loss += batch_loss / len(micro_chunks)
             n_batches += 1
             global_step += 1
             if global_step % 200 == 0:
