@@ -47,10 +47,16 @@ def move_attributes(fen: str, uci: str) -> dict[str, Any] | None:
         if move not in board.legal_moves:
             return None
         san = board.san(move)
+        if board.is_en_passant(move):
+            captured = chess.PAWN
+        else:
+            captured = board.piece_type_at(move.to_square) or 0
         attrs = {
             "uci": uci,
             "san": san,
             "piece_type": int(board.piece_type_at(move.from_square) or 0),
+            "captured_piece_type": int(captured),
+            "to_square": int(move.to_square),
             "is_capture": bool(board.is_capture(move)),
             "is_castling": bool(board.is_castling(move)),
             "is_promotion": move.promotion is not None,
@@ -141,6 +147,16 @@ def symbolic_score_matrix(attrs: list[dict[str, Any] | None], variant: str) -> t
         if variant == "move_plus_flags":
             codes = _encode_column(column("uci"))
             scores += _MOVE_WEIGHT * (codes.unsqueeze(1) == codes.unsqueeze(0)).float()
+        return scores
+    if variant in {"word_level", "word_level_plus_to"}:
+        # 코멘트가 "단어 수준" 정보(기물·잡은 기물·전술 플래그, +to_square)만 완벽 전달한다고
+        # 가정한 상한 — move 비언급 세그먼트의 현실적 상한 후보.
+        fields = _FLAG_FIELDS + ("captured_piece_type",)
+        if variant == "word_level_plus_to":
+            fields = fields + ("to_square",)
+        for field in fields:
+            codes = _encode_column(column(field))
+            scores += (codes.unsqueeze(1) == codes.unsqueeze(0)).float()
         return scores
     raise ValueError(f"unknown variant: {variant}")
 
