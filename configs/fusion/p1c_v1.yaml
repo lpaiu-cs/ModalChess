@@ -7,7 +7,7 @@ encoder_checkpoint: outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_mo
 output_dir: outputs/phase2/p1c_v1
 
 batch_size: 16
-micro_batch_size: 8
+micro_batch_size: 4     # qa_v2 T3 질문이 더 길어 micro 8은 ~1GB shared 스필 → 4로 헤드룸 확보
 eval_batch_size: 48
 lr: 0.001
 weight_decay: 0.01
