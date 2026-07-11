@@ -107,6 +107,25 @@ TEMPLATES: dict[str, list[str]] = {
         "Does a pin against its king hold the piece on {square}?",
         "Check if the piece on {square} is pinned to its king.",
     ],
+    # T3: 1수 동역학 (move는 {frm}→{to}로 명시, 전 arm이 동일 텍스트로 봄)
+    "move_is_capture": [
+        "If the piece on {frm} moves to {to}, does it capture an enemy piece?",
+        "Would moving the piece from {frm} to {to} capture something?",
+        "Is the move from {frm} to {to} a capture?",
+        "Playing {frm} to {to}: does it take an enemy piece?",
+    ],
+    "move_gives_check": [
+        "If the piece on {frm} moves to {to}, does it give check?",
+        "Would moving from {frm} to {to} put the enemy king in check?",
+        "Does the move from {frm} to {to} deliver check?",
+        "Playing {frm} to {to}: does it check the enemy king?",
+    ],
+    "move_is_legal": [
+        "Is moving the piece from {frm} to {to} a legal move here?",
+        "In this position, is {frm} to {to} a legal move?",
+        "Would moving from {frm} to {to} be legal right now?",
+        "Is the move {frm} to {to} allowed in this position?",
+    ],
 }
 
 HELD_OUT_TEMPLATE_INDEX = 3
@@ -121,6 +140,9 @@ TASK_TIER = {
     "piece_defended": "T2",
     "is_check": "T2",
     "piece_pinned": "T2",
+    "move_is_capture": "T3",
+    "move_gives_check": "T3",
+    "move_is_legal": "T3",
 }
 
 ALL_TASKS = tuple(TASK_TIER)

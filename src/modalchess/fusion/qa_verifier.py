@@ -39,6 +39,9 @@ _N_CANDIDATES = {
     "piece_defended": 3,
     "is_check": 2,
     "piece_pinned": 3,
+    "move_is_capture": 2,
+    "move_gives_check": 2,
+    "move_is_legal": 2,
 }
 
 _WORD_TO_PTYPE = {v: k for k, v in PIECE_WORDS.items()}
@@ -97,6 +100,29 @@ def _expected_answer(task: str, fen: str, params: dict[str, Any]) -> str:
             return no_such_piece(params["square"])
         pinned = board.pin(piece.color, sq) != chess.SquareSet(chess.BB_ALL)
         return YES if pinned else NO
+
+    if task in ("move_is_capture", "move_gives_check", "move_is_legal"):
+        frm = chess.parse_square(params["frm"])
+        to = chess.parse_square(params["to"])
+        move = chess.Move(frm, to)
+        legal_ucis = {m.uci() for m in board.legal_moves}
+        if task == "move_is_legal":
+            return YES if move.uci() in legal_ucis else NO
+        # 합법 move에 대해서만 capture/check 판정(생성기가 합법만 출제)
+        if task == "move_is_capture":
+            # 독립 경로: 도착 칸 점유 or 앙파상(폰이 대각 이동하며 도착 칸이 비어있음)
+            target = pieces.get(to)
+            captures = target is not None and target.color != board.turn
+            mover = pieces.get(frm)
+            if (not captures and mover is not None and mover.piece_type == chess.PAWN
+                    and chess.square_file(frm) != chess.square_file(to) and target is None):
+                captures = True  # en passant
+            return YES if captures else NO
+        if task == "move_gives_check":
+            # 독립 경로: move를 실제로 두고 결과 국면에서 체크 여부 확인
+            nxt = board.copy(stack=False)
+            nxt.push(move)
+            return YES if nxt.is_check() else NO
 
     raise ValueError(f"unknown task {task}")
 

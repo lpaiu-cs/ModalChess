@@ -179,6 +179,28 @@ epoch2에서 Δ+0.05로 미수렴(fen_soft Δ+0.02) → "FEN 우위"가 학습�
 - 통과 시 3-seed 확정. QA 누출(king_square·attacked·defended)은 별도 트랙(V1 정화용),
   M1/hybrid 비교엔 상쇄되므로 P1b 판정엔 영향 없음.
 
+## 9c. P1c 사전 등록 — T3(1수 동역학)로 하이브리드 심화 (사용자 선택)
+
+P1b에서 시각 채널이 **정적 파생 상태(체크·핀)**를 FEN 위에 보강함을 확인. P1c는 그 강점을
+**계산된 1수 동역학**이라는 더 큰 무대에서 검증한다.
+
+**T3 과제 (move는 {frm}→{to}로 질문 텍스트에 명시 — 전 arm 동일)**:
+- move_is_capture: 그 수가 캡처인가 (도착 칸 판독 — 통제 과제)
+- move_gives_check: 그 수가 체크를 주는가 (수 시뮬레이션 필요 — **핵심**)
+- move_is_legal: 그 수가 합법인가 (인코더 legality head 전이 여부)
+전부 yes/no 균형, 검증기는 독립 경로(move_is_legal=is_legal API, gives_check=실제 push 후
+is_check, capture=도착 칸 점유/앙파상). qa_v2 = T1+T2+T3 (test 15.6k, 검증 불일치 0).
+
+**설계**: arms {board, fen_soft, hybrid, blind} @4ep, qa_v2. 나머지 P1b와 동일.
+**사전 등록 예측 (반증 가능)**:
+- move_gives_check가 핵심 시험. FEN은 수를 머릿속 시뮬레이션해야 하므로 낮을 것으로 예측;
+  인코더가 이동 정책·관계 구조를 학습했다면 **hybrid > fen_soft (gives_check +0.10↑)**.
+- 판정선: hybrid가 **T3 집계에서 fen_soft 대비 오류 유의 감소(+0.05 overall)** 이면서
+  gives_check에서 명확한 우위 → "시각 보강이 계산된 동역학까지 확장" 인정.
+- 반증: hybrid ≈ fen_soft (T3 전반)면 → 인코더 보강은 **정적 현재-국면 상태에 한정**,
+  1수 앞 동역학엔 전이 안 됨(가치 경계 확정). 이 또한 유효한 정밀화.
+- board(단독)로 귀속: hybrid 이득이 board 토큰에서 오는지(board도 T3 우수) 확인.
+
 ## 10. 예산 추정
 
 - QA 생성: CPU 수 분~수십 분. P1 학습: arm당 seed당 ~1.5h (RTX 5090, 4B frozen,

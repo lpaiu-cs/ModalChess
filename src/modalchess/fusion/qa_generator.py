@@ -58,6 +58,9 @@ def default_quotas(scale: float) -> dict[str, dict[Any, int]]:
         "piece_defended": {c: q(4333) for c in (YES, NO, "nosuch")},
         "is_check": {c: q(6500) for c in (YES, NO)},
         "piece_pinned": {c: q(4333) for c in (YES, NO, "nosuch")},
+        "move_is_capture": {c: q(6500) for c in (YES, NO)},
+        "move_gives_check": {c: q(6500) for c in (YES, NO)},
+        "move_is_legal": {c: q(6500) for c in (YES, NO)},
     }
     return quotas
 
@@ -91,6 +94,9 @@ class _SplitGenerator:
             "piece_defended": self._piece_defended,
             "is_check": self._is_check,
             "piece_pinned": self._piece_pinned,
+            "move_is_capture": self._move_is_capture,
+            "move_gives_check": self._move_gives_check,
+            "move_is_legal": self._move_is_legal,
         }
 
     # --- item 공통 조립 ---
@@ -295,6 +301,58 @@ class _SplitGenerator:
                 "piece_pinned", board, cls, answer, candidates,
                 {"square": sq_name}, {"square": sq_name},
             )
+        return None
+
+    # --- T3: 1수 동역학 (move는 non-promotion만, {frm}→{to} 명시) ---
+
+    def _legal_nonpromo(self, board: chess.Board) -> list[chess.Move]:
+        return [m for m in board.legal_moves if m.promotion is None]
+
+    def _move_item(self, task: str, board: chess.Board, cls: str, move: chess.Move) -> dict | None:
+        frm, to = chess.square_name(move.from_square), chess.square_name(move.to_square)
+        return self._make(
+            task, board, cls, cls, [YES, NO],
+            {"frm": frm, "to": to}, {"frm": frm, "to": to},
+        )
+
+    def _move_is_capture(self, board: chess.Board) -> dict | None:
+        for cls in _needed(self.remaining["move_is_capture"], self.rng):
+            moves = [m for m in self._legal_nonpromo(board)
+                     if (YES if board.is_capture(m) else NO) == cls]
+            if not moves:
+                continue
+            return self._move_item("move_is_capture", board, cls, self.rng.choice(moves))
+        return None
+
+    def _move_gives_check(self, board: chess.Board) -> dict | None:
+        for cls in _needed(self.remaining["move_gives_check"], self.rng):
+            moves = [m for m in self._legal_nonpromo(board)
+                     if (YES if board.gives_check(m) else NO) == cls]
+            if not moves:
+                continue
+            return self._move_item("move_gives_check", board, cls, self.rng.choice(moves))
+        return None
+
+    def _move_is_legal(self, board: chess.Board) -> dict | None:
+        legal = set(self._legal_nonpromo(board))
+        for cls in _needed(self.remaining["move_is_legal"], self.rng):
+            if cls == YES:
+                if not legal:
+                    continue
+                return self._move_item("move_is_legal", board, YES, self.rng.choice(list(legal)))
+            # NO: 착수측 기물이 있는 칸에서 비합법 도착으로 그럴듯한 illegal move 구성
+            own_squares = [s for s in chess.SQUARES
+                           if (p := board.piece_at(s)) is not None and p.color == board.turn]
+            self.rng.shuffle(own_squares)
+            for frm in own_squares:
+                targets = list(range(64))
+                self.rng.shuffle(targets)
+                for to in targets:
+                    if to == frm:
+                        continue
+                    mv = chess.Move(frm, to)
+                    if mv not in legal and chess.Move(frm, to, promotion=chess.QUEEN) not in board.legal_moves:
+                        return self._move_item("move_is_legal", board, NO, mv)
         return None
 
     # --- 메인 루프 ---

@@ -18,11 +18,11 @@ CHECK_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
 
 
 def _item(task, fen, params, answer, candidates, template_id=0):
+    from modalchess.fusion.qa_tasks import TASK_TIER
+
     return {
         "qa_id": "t",
-        "tier": {"piece_on_square": "T1", "king_square": "T1", "side_to_move": "T1",
-                 "castling_right": "T1", "piece_count": "T1", "square_attacked": "T2",
-                 "piece_defended": "T2", "is_check": "T2", "piece_pinned": "T2"}[task],
+        "tier": TASK_TIER[task],
         "task": task,
         "template_id": template_id,
         "question": TEMPLATES[task][template_id].format(**params),
@@ -77,6 +77,30 @@ def test_verifier_pin_and_check_fixtures() -> None:
     assert chess.Board(CHECK_FEN).is_check()
     check = _item("is_check", CHECK_FEN, {}, "yes", ["yes", "no"])
     assert verify_item(check) == []
+
+
+def test_verifier_t3_known_answers() -> None:
+    # 1.e4 후 흑 차례
+    after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    # move_is_legal: d7d5 합법, d7d4(3칸) 비합법
+    assert verify_item(_item("move_is_legal", after_e4, {"frm": "d7", "to": "d5"}, "yes",
+                             ["yes", "no"])) == []
+    assert verify_item(_item("move_is_legal", after_e4, {"frm": "d7", "to": "d4"}, "no",
+                             ["yes", "no"])) == []
+    # move_is_capture: 스카치 캡처 위치 — 백 e4 폰이 d5를 따먹음
+    cap = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2"
+    assert chess.Board(cap).is_capture(chess.Move.from_uci("e4d5"))
+    assert verify_item(_item("move_is_capture", cap, {"frm": "e4", "to": "d5"}, "yes",
+                             ["yes", "no"])) == []
+    assert verify_item(_item("move_is_capture", cap, {"frm": "g1", "to": "f3"}, "no",
+                             ["yes", "no"])) == []
+    # move_gives_check: Qh5 후 흑 ...g6, Qxg6 아니고 — 간단히 Qh5xf7는 체크. 직접 구성:
+    chk = "rnbqkbnr/pppp1ppp/8/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 0 1"  # 백 퀸 h5
+    assert chess.Board(chk).gives_check(chess.Move.from_uci("h5f7"))
+    assert verify_item(_item("move_gives_check", chk, {"frm": "h5", "to": "f7"}, "yes",
+                             ["yes", "no"])) == []
+    assert verify_item(_item("move_gives_check", chk, {"frm": "g1", "to": "f3"}, "no",
+                             ["yes", "no"])) == []
 
 
 def _random_position_pool(n_games: int, seed: int) -> list[tuple[str, str]]:
