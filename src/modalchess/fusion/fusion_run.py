@@ -324,6 +324,13 @@ def aggregate_metrics(items: list[dict[str, Any]], correct: list[bool]) -> dict[
     }
 
 
+def resolve_arm_dir(output_dir: str | Path, arm_kind: str, seed: int) -> Path:
+    """arm/seed별 하위 디렉터리 경로. 이미 해당 접미사면 중복 append하지 않는다."""
+    base = Path(output_dir)
+    subdir = f"{arm_kind}_seed{seed}"
+    return base if base.name == subdir else base / subdir
+
+
 def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -332,6 +339,11 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed = int(config["seed"])
     torch.manual_seed(seed)
+
+    # arm/seed별 하위 디렉터리로 자동 격리 — 공유 output_dir로 여러 arm을 돌려도 서로
+    # 덮어쓰지 않는다. 이미 arm-specific 경로면(재실행) 중복 append 방지.
+    config = dict(config)
+    config["output_dir"] = str(resolve_arm_dir(config["output_dir"], arm_kind, seed))
 
     # arm-level 재개: 이미 완료된 동일 arm·seed(eval.json + test)이면 재실행하지 않고 건너뛴다.
     # arm_kind/seed 일치를 반드시 확인 — 공유 output_dir에서 다른 arm 결과를 재사용하는 것을 차단.

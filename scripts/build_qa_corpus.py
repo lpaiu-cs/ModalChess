@@ -104,6 +104,9 @@ def main() -> None:
         ("val", val_pos, args.val_scale, False),
         ("test", test_pos, args.test_scale, True),
     ]
+    # stage-then-commit: 모든 split을 먼저 생성·검증하고, 전부 통과한 뒤에만 파일을 쓴다.
+    # (부분 발행 방지 — train만 쓴 뒤 val/test가 실패하면 out_dir에 혼합/부분 코퍼스가 남음.)
+    staged: list[tuple[str, list[dict]]] = []
     total_mismatched = 0
     for name, pool, scale, with_held_out in specs:
         print(f"generating {name} (scale={scale}, tiers={tiers})...", flush=True)
@@ -115,20 +118,14 @@ def main() -> None:
             item["split"] = name
         report = verify_corpus(items)
         total_mismatched += report["n_mismatched"]
-        # P0 규율(phase2_plan §6): 아티팩트 발행 전에 즉시 실패해야 하는 두 조건.
-        # (1) 검증기 불일치 — bad 생성기/검증기가 조용히 유효 코퍼스로 둔갑하는 것 차단.
+        # P0 규율(phase2_plan §6): 어느 split이든 검증 불일치/쿼터 미충족이면 아무것도 쓰지 않고 실패.
         if report["n_mismatched"] > 0:
             print(f"P0_CORPUS_FAIL split={name} mismatched={report['n_mismatched']} "
                   f"samples={report['error_samples'][:5]}", flush=True)
             raise SystemExit(1)
-        # (2) 쿼터 미충족 — P0 balance 보장이 깨진 불균형 코퍼스로 하류 비교가 진행되는 것 차단.
         if shortfall:
             print(f"P0_CORPUS_FAIL split={name} quota_shortfall={shortfall}", flush=True)
             raise SystemExit(1)
-        out_path = out_dir / f"qa_{name}.jsonl"
-        with open(out_path, "w", encoding="utf-8") as handle:
-            for item in items:
-                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
         n_held_out = sum(1 for i in items if i["template_id"] == 3)
         stats["splits"][name] = {
             "n_items": report["n_items"],
@@ -139,9 +136,15 @@ def main() -> None:
             "n_held_out_template_items": n_held_out,
             "n_unique_positions_used": len({i["position_key"] for i in items}),
         }
-        print(f"  {name}: {report['n_items']} items, mismatched={report['n_mismatched']}, "
-              f"shortfall_tasks={list(shortfall)}, held_out_tpl={n_held_out}", flush=True)
+        staged.append((name, items))
+        print(f"  {name}: {report['n_items']} items, mismatched=0, "
+              f"shortfall_tasks=[], held_out_tpl={n_held_out} (staged)", flush=True)
 
+    # 전 split 통과 확인 후에만 발행
+    for name, items in staged:
+        with open(out_dir / f"qa_{name}.jsonl", "w", encoding="utf-8") as handle:
+            for item in items:
+                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
     (out_dir / "qa_stats.json").write_text(
         json.dumps(stats, indent=2, ensure_ascii=False), encoding="utf-8"
     )

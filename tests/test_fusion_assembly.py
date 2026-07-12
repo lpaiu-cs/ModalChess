@@ -37,6 +37,18 @@ def test_blind_arm_injection_shape() -> None:
     assert len(arm.trainable_parameters()) == 1
 
 
+def test_resolve_arm_dir_isolates_and_is_idempotent() -> None:
+    from pathlib import Path
+
+    from modalchess.fusion.fusion_run import resolve_arm_dir
+
+    # 공유 base → arm/seed 하위 디렉터리로 격리 (다른 arm은 다른 경로)
+    assert resolve_arm_dir("out/p1", "board", 11) == Path("out/p1/board_seed11")
+    assert resolve_arm_dir("out/p1", "fen_soft", 11) == Path("out/p1/fen_soft_seed11")
+    # 이미 arm-specific 경로면 중복 append 안 함(러너가 arm 디렉터리를 직접 넘겨도 안전)
+    assert resolve_arm_dir("out/p1/board_seed11", "board", 11) == Path("out/p1/board_seed11")
+
+
 def test_hybrid_arm_uses_both_channels() -> None:
     # hybrid는 board 토큰 주입 + FEN 텍스트 병행 (백본 없이 속성만 검증)
     class _StubBackbone:
