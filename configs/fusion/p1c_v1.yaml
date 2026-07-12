@@ -1,0 +1,18 @@
+# Phase 2 P1c (docs/phase2_plan.md §9c): T3(1수 동역학) 심화. qa_v2 = T1+T2+T3.
+seed: 11
+qa_dir: outputs/phase2/qa_v2
+model_dir: E:/models/Qwen3-4B-Instruct-2507
+calib_json: outputs/phase2/p0_sanity.json
+encoder_checkpoint: outputs/scale_v1/official/tier_m_g3/seed11/best_grounding_model.pt
+output_dir: outputs/phase2/p1c_v1
+
+batch_size: 16
+micro_batch_size: 4     # qa_v2 T3 질문이 더 길어 micro 8은 ~1GB shared 스필 → 4로 헤드룸 확보
+eval_batch_size: 48
+lr: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.05
+epochs: 4
+val_subset: 2000
+
+null_seed: 20260710
