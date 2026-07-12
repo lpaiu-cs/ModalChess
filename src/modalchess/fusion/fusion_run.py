@@ -235,7 +235,12 @@ def train_arm(config: dict[str, Any], arm: FusionArm, model, tokenizer,
 def evaluate_items(config: dict[str, Any], arm: FusionArm, model, tokenizer,
                    device: torch.device, items: list[dict[str, Any]],
                    shuffle_board_seed: int | None = None) -> dict[str, Any]:
-    """후보 logprob 채점. shuffle_board_seed 지정 시 보드 소스만 파생 순열로 치환(null)."""
+    """후보 logprob 채점. shuffle_board_seed 지정 시 보드 채널만 파생 순열로 치환(null).
+
+    hybrid(FEN 텍스트+보드 토큰)에서는 **보드 토큰(시각 채널)만 셔플하고 FEN 텍스트는 참값
+    유지** — null이 시각 주입 채널을 격리하도록. 순수 FEN arm은 FEN 텍스트가 유일한 보드
+    채널이므로 텍스트를 셔플한다.
+    """
     if device.type == "cuda":
         torch.cuda.empty_cache()  # 학습 캐시 반환 후 eval — 단편화로 인한 shared 스필 방지
     assembler = SequenceAssembler(tokenizer, inject=arm.kind != "fen_zs",
@@ -244,13 +249,18 @@ def evaluate_items(config: dict[str, Any], arm: FusionArm, model, tokenizer,
     history_length = arm.backbone.history_length if arm.backbone is not None else 1
     eval_bs = int(config.get("eval_batch_size", 48))
 
-    fen_for_item = [it["fen"] for it in items]
+    true_fens = [it["fen"] for it in items]
+    planes_fen = true_fens  # board_batch(주입 토큰) 소스
+    text_fen = true_fens    # assembler(FEN 텍스트) 소스
     if shuffle_board_seed is not None:
         rng = random.Random(shuffle_board_seed)
         perm = list(range(len(items)))
         rng.shuffle(perm)
         perm = perm[1:] + perm[:1]  # 고정점 제거(derangement 근사)
-        fen_for_item = [items[j]["fen"] for j in perm]
+        shuffled_fens = [items[j]["fen"] for j in perm]
+        planes_fen = shuffled_fens
+        # FEN 텍스트가 유일한 보드 채널인 arm만 텍스트도 셔플. hybrid는 텍스트 참값 유지.
+        text_fen = shuffled_fens if (arm.uses_fen_text and not arm.uses_board_planes) else true_fens
 
     rows: list[tuple[int, str]] = []
     for idx, item in enumerate(items):
@@ -262,10 +272,11 @@ def evaluate_items(config: dict[str, Any], arm: FusionArm, model, tokenizer,
         chunk = rows[start : start + eval_bs]
         chunk_items = [items[i] for i, _ in chunk]
         chunk_answers = [c for _, c in chunk]
-        chunk_fens = [fen_for_item[i] for i, _ in chunk]
+        chunk_text_fens = [text_fen[i] for i, _ in chunk]
+        chunk_plane_fens = [planes_fen[i] for i, _ in chunk]
         assembled = assembler.build(chunk_items, chunk_answers, device,
-                                    fens_override=chunk_fens if arm.uses_fen_text else None)
-        arm_inputs = (board_batch(chunk_items, history_length, fens_override=chunk_fens)
+                                    fens_override=chunk_text_fens if arm.uses_fen_text else None)
+        arm_inputs = (board_batch(chunk_items, history_length, fens_override=chunk_plane_fens)
                       if arm.uses_board_planes else {})
         embeds = _forward_embeds(model, embed_layer, assembled, arm, arm_inputs, device)
         logits = model(inputs_embeds=embeds,
@@ -322,7 +333,8 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
     seed = int(config["seed"])
     torch.manual_seed(seed)
 
-    # arm-level 재개: 이미 완료된 arm(eval.json + test)이면 재실행하지 않고 건너뛴다.
+    # arm-level 재개: 이미 완료된 동일 arm·seed(eval.json + test)이면 재실행하지 않고 건너뛴다.
+    # arm_kind/seed 일치를 반드시 확인 — 공유 output_dir에서 다른 arm 결과를 재사용하는 것을 차단.
     out_dir = Path(config["output_dir"])
     done_path = out_dir / "eval.json"
     if config.get("resume", True) and done_path.exists():
@@ -330,7 +342,8 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
             prev = json.loads(done_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             prev = None
-        if prev and prev.get("test", {}).get("overall", {}).get("accuracy") is not None:
+        if (prev and prev.get("arm") == arm_kind and prev.get("seed") == seed
+                and prev.get("test", {}).get("overall", {}).get("accuracy") is not None):
             print(f"ARM_SKIP {arm_kind} seed={seed} "
                   f"test_acc={prev['test']['overall']['accuracy']:.4f} (already done)", flush=True)
             return prev

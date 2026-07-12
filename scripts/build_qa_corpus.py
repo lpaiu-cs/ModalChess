@@ -91,6 +91,12 @@ def main() -> None:
             item["split"] = name
         report = verify_corpus(items)
         total_mismatched += report["n_mismatched"]
+        # P0 규율(phase2_plan §6): 검증기 불일치가 하나라도 있으면 아티팩트를 발행하지 않고
+        # 즉시 실패한다 — bad 생성기/검증기 변경이 조용히 유효 코퍼스로 둔갑하는 것을 차단.
+        if report["n_mismatched"] > 0:
+            print(f"P0_CORPUS_FAIL split={name} mismatched={report['n_mismatched']} "
+                  f"samples={report['error_samples'][:5]}", flush=True)
+            raise SystemExit(1)
         out_path = out_dir / f"qa_{name}.jsonl"
         with open(out_path, "w", encoding="utf-8") as handle:
             for item in items:
