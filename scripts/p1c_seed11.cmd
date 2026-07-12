@@ -4,9 +4,11 @@ cd /d E:\lab\modalchess
 set PYTHONUNBUFFERED=1
 set LOGDIR=outputs\phase2\p1c_v1
 if not exist %LOGDIR% mkdir %LOGDIR%
+del /q %LOGDIR%\P1C_DONE.marker %LOGDIR%\P1C_FAILED.marker 2>nul
 for %%A in (fen_soft hybrid board blind) do (
   echo === arm %%A start === >> %LOGDIR%\p1c.log
   C:\Users\lpaiu\AppData\Local\Programs\Python\Python312\python.exe -u scripts\train_fusion_arm.py --config configs\fusion\p1c_v1.yaml --arm %%A --seed 11 --output-dir %LOGDIR%\%%A_seed11 >> %LOGDIR%\p1c.log 2>&1
-  if errorlevel 1 echo ARM_FAILED %%A >> %LOGDIR%\p1c.log
+  if errorlevel 1 ( echo ARM_FAILED %%A >> %LOGDIR%\p1c.log & echo failed >> %LOGDIR%\P1C_FAILED.marker )
 )
+if exist %LOGDIR%\P1C_FAILED.marker ( exit /b 1 )
 echo done > %LOGDIR%\P1C_DONE.marker

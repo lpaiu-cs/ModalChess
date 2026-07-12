@@ -105,6 +105,9 @@ def main() -> None:
     out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     passed = result["nll_finite"] and not degenerate
     print(f"P0_SANITY_{'PASS' if passed else 'FAIL'}")
+    if not passed:
+        # CI/배치 게이트가 exit code에 의존 — 실패한 캘리브레이션으로 P1 진입 차단
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
