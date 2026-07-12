@@ -68,20 +68,35 @@ def main() -> None:
     val_pos, val_keys, val_games = load_positions(data_root / "supervised_val.jsonl")
     train_pos, train_keys, train_games = load_positions(data_root / "supervised_train.jsonl")
 
-    # 크로스-split 포지션 중복 제거 (test > val > train)
-    val_pos = [(f, g) for f, g in val_pos if position_key(f) not in test_keys]
-    blocked = test_keys | val_keys
-    train_pos = [(f, g) for f, g in train_pos if position_key(f) not in blocked]
+    raw_game_overlap = {
+        "train∩val": len(train_games & val_games),
+        "train∩test": len(train_games & test_games),
+        "val∩test": len(val_games & test_games),
+    }
+    # 위생 강제(phase2_plan §5, test > val > train): 포지션 dedup에 더해 **game 단위** 홀드아웃.
+    # 상위 split의 game_id를 하위 split에서 통째로 제거 → QA-train이 QA-test 게임의 인접
+    # 포지션을 포함하지 못하게(단순 position dedup으로는 못 막는 오염 차단).
+    val_pos = [(f, g) for f, g in val_pos
+               if g not in test_games and position_key(f) not in test_keys]
+    blocked_keys = test_keys | val_keys
+    blocked_games = test_games | val_games
+    train_pos = [(f, g) for f, g in train_pos
+                 if g not in blocked_games and position_key(f) not in blocked_keys]
 
+    # 제거 후 game 교차가 0이어야 함(강제의 사후 검증). 아니면 실패.
+    post_train_games = {g for _, g in train_pos}
+    post_val_games = {g for _, g in val_pos}
+    residual = (len(post_train_games & post_val_games)
+                + len(post_train_games & test_games) + len(post_val_games & test_games))
     hygiene = {
         "unique_positions": {"train": len(train_pos), "val": len(val_pos), "test": len(test_pos)},
-        "game_overlap": {
-            "train∩val": len(train_games & val_games),
-            "train∩test": len(train_games & test_games),
-            "val∩test": len(val_games & test_games),
-        },
+        "raw_game_overlap": raw_game_overlap,
+        "residual_game_overlap_after_holdout": residual,
     }
     print("hygiene:", json.dumps(hygiene, ensure_ascii=False), flush=True)
+    if residual > 0:
+        print(f"P0_CORPUS_FAIL residual game overlap after holdout: {residual}", flush=True)
+        raise SystemExit(1)
 
     stats: dict[str, object] = {"hygiene": hygiene, "tiers": list(tiers), "splits": {}}
     specs = [

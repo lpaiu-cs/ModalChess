@@ -395,6 +395,13 @@ def generate_split(
     """
     from modalchess.fusion.qa_tasks import TASK_TIER
 
+    known_tiers = set(TASK_TIER.values())
+    unknown = [t for t in tiers if t not in known_tiers]
+    if not tiers or unknown:
+        raise ValueError(
+            f"잘못된 tiers={tiers!r} (빈 집합 또는 미지 tier {unknown}); "
+            f"허용={sorted(known_tiers)}"
+        )
     rng = random.Random(seed)
     n_templates = len(next(iter(TEMPLATES.values())))
     template_ids = list(range(n_templates))

@@ -161,6 +161,16 @@ def test_tiers_filter_controls_t3() -> None:
     assert any(TASK_TIER[i["task"]] == "T3" for i in items_v2)
 
 
+def test_tiers_validation_rejects_unknown_and_empty() -> None:
+    import pytest
+
+    pool = _random_position_pool(n_games=5, seed=2)
+    for bad in [("T1", "T22"), (), ("",)]:
+        with pytest.raises(ValueError):
+            generate_split(pool, quota_scale=0.001, seed=11,
+                           include_held_out_template=False, tiers=bad)
+
+
 def test_generator_no_duplicate_params_per_position() -> None:
     pool = _random_position_pool(n_games=20, seed=5)
     items, _ = generate_split(pool, quota_scale=0.002, seed=23, include_held_out_template=False)
