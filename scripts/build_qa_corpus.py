@@ -3,6 +3,11 @@
 split 매핑(docs/phase2_plan.md §5): QA-train←supervised_train(인코더 노출 허용),
 QA-val←supervised_val, QA-test←supervised_test(인코더 미노출). 크로스-split 포지션
 중복은 test > val > train 우선순위로 제거. test만 held-out 템플릿 포함.
+
+코퍼스 버전 재현(--tiers로 task-set 명시):
+  qa_v1: python scripts/build_qa_corpus.py --out-dir outputs/phase2/qa_v1 --tiers T1,T2
+  qa_v2: python scripts/build_qa_corpus.py --out-dir outputs/phase2/qa_v2 --tiers T1,T2,T3
+검증 불일치 또는 쿼터 미충족이 있으면 아티팩트 발행 전에 exit 1로 실패한다(P0 규율).
 """
 
 from __future__ import annotations
@@ -48,7 +53,11 @@ def main() -> None:
     parser.add_argument("--train-scale", type=float, default=1.0)
     parser.add_argument("--val-scale", type=float, default=0.05)
     parser.add_argument("--test-scale", type=float, default=0.10)
+    # 코퍼스 버전별 task-set 명시(재현성): qa_v1=T1,T2 (기본) / qa_v2=T1,T2,T3
+    parser.add_argument("--tiers", default="T1,T2",
+                        help="생성할 tier CSV. 기본 'T1,T2'(qa_v1). qa_v2는 'T1,T2,T3'.")
     args = parser.parse_args()
+    tiers = tuple(t.strip() for t in args.tiers.split(",") if t.strip())
 
     data_root = Path(args.data_root)
     out_dir = Path(args.out_dir)
@@ -74,7 +83,7 @@ def main() -> None:
     }
     print("hygiene:", json.dumps(hygiene, ensure_ascii=False), flush=True)
 
-    stats: dict[str, object] = {"hygiene": hygiene, "splits": {}}
+    stats: dict[str, object] = {"hygiene": hygiene, "tiers": list(tiers), "splits": {}}
     specs = [
         ("train", train_pos, args.train_scale, False),
         ("val", val_pos, args.val_scale, False),
@@ -82,20 +91,24 @@ def main() -> None:
     ]
     total_mismatched = 0
     for name, pool, scale, with_held_out in specs:
-        print(f"generating {name} (scale={scale})...", flush=True)
+        print(f"generating {name} (scale={scale}, tiers={tiers})...", flush=True)
         items, shortfall = generate_split(
             pool, quota_scale=scale, seed=args.seed + len(name),
-            include_held_out_template=with_held_out,
+            include_held_out_template=with_held_out, tiers=tiers,
         )
         for item in items:
             item["split"] = name
         report = verify_corpus(items)
         total_mismatched += report["n_mismatched"]
-        # P0 규율(phase2_plan §6): 검증기 불일치가 하나라도 있으면 아티팩트를 발행하지 않고
-        # 즉시 실패한다 — bad 생성기/검증기 변경이 조용히 유효 코퍼스로 둔갑하는 것을 차단.
+        # P0 규율(phase2_plan §6): 아티팩트 발행 전에 즉시 실패해야 하는 두 조건.
+        # (1) 검증기 불일치 — bad 생성기/검증기가 조용히 유효 코퍼스로 둔갑하는 것 차단.
         if report["n_mismatched"] > 0:
             print(f"P0_CORPUS_FAIL split={name} mismatched={report['n_mismatched']} "
                   f"samples={report['error_samples'][:5]}", flush=True)
+            raise SystemExit(1)
+        # (2) 쿼터 미충족 — P0 balance 보장이 깨진 불균형 코퍼스로 하류 비교가 진행되는 것 차단.
+        if shortfall:
+            print(f"P0_CORPUS_FAIL split={name} quota_shortfall={shortfall}", flush=True)
             raise SystemExit(1)
         out_path = out_dir / f"qa_{name}.jsonl"
         with open(out_path, "w", encoding="utf-8") as handle:

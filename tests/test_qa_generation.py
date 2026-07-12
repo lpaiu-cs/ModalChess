@@ -146,6 +146,21 @@ def test_generator_balance_and_false_premise() -> None:
     assert by_task_class.get(("piece_pinned", "nosuch"), 0) >= 1
 
 
+def test_tiers_filter_controls_t3() -> None:
+    from modalchess.fusion.qa_tasks import TASK_TIER
+
+    pool = _random_position_pool(n_games=40, seed=9)
+    # 기본(T1,T2) = qa_v1: T3 task가 없어야 한다 (재현성 — T3 누출 방지)
+    items_v1, _ = generate_split(pool, quota_scale=0.002, seed=11,
+                                 include_held_out_template=False)
+    assert all(TASK_TIER[i["task"]] in ("T1", "T2") for i in items_v1)
+    assert not any(TASK_TIER[i["task"]] == "T3" for i in items_v1)
+    # T1,T2,T3 = qa_v2: T3 task가 실제로 생성돼야 한다
+    items_v2, _ = generate_split(pool, quota_scale=0.002, seed=11,
+                                 include_held_out_template=False, tiers=("T1", "T2", "T3"))
+    assert any(TASK_TIER[i["task"]] == "T3" for i in items_v2)
+
+
 def test_generator_no_duplicate_params_per_position() -> None:
     pool = _random_position_pool(n_games=20, seed=5)
     items, _ = generate_split(pool, quota_scale=0.002, seed=23, include_held_out_template=False)

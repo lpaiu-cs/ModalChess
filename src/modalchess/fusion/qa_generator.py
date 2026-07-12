@@ -366,7 +366,8 @@ class _SplitGenerator:
         except ValueError:
             return []
         items: list[dict] = []
-        tasks = [t for t in ALL_TASKS if any(v > 0 for v in self.remaining[t].values())]
+        # self.remaining에 있는 task만 순회(tier 필터로 일부 task는 quota에서 제외될 수 있음).
+        tasks = [t for t in self.remaining if any(v > 0 for v in self.remaining[t].values())]
         self.rng.shuffle(tasks)
         for task in tasks:
             if len(items) >= _MAX_ITEMS_PER_POSITION:
@@ -385,14 +386,23 @@ def generate_split(
     quota_scale: float,
     seed: int,
     include_held_out_template: bool,
+    tiers: tuple[str, ...] = ("T1", "T2"),
 ) -> tuple[list[dict], dict[str, dict[str, int]]]:
-    """포지션 풀에서 클래스 균형 QA를 생성. 반환: (items, 미충족 쿼터 리포트)."""
+    """포지션 풀에서 클래스 균형 QA를 생성. 반환: (items, 미충족 쿼터 리포트).
+
+    tiers: 생성할 tier 집합. 기본 ("T1","T2")=qa_v1 재현. ("T1","T2","T3")=qa_v2.
+    코퍼스 버전별 task-set을 명시해 재현성 보장(T3가 qa_v1에 새는 것 방지).
+    """
+    from modalchess.fusion.qa_tasks import TASK_TIER
+
     rng = random.Random(seed)
     n_templates = len(next(iter(TEMPLATES.values())))
     template_ids = list(range(n_templates))
     if not include_held_out_template:
         template_ids.remove(HELD_OUT_TEMPLATE_INDEX)
-    gen = _SplitGenerator(default_quotas(quota_scale), template_ids, rng)
+    allowed = {t for t in ALL_TASKS if TASK_TIER[t] in tiers}
+    quotas = {t: q for t, q in default_quotas(quota_scale).items() if t in allowed}
+    gen = _SplitGenerator(quotas, template_ids, rng)
     order = list(range(len(positions)))
     rng.shuffle(order)
     items: list[dict] = []
