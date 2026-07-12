@@ -22,6 +22,7 @@ from modalchess.fusion.fusion_arms import (
     fen_to_planes_meta,
 )
 from modalchess.fusion.prompting import PRE_BOARD, answer_segment, fen_board_text, post_board
+from modalchess.utils.device import resolve_autocast_dtype
 
 N_INJECT = 64
 
@@ -360,10 +361,12 @@ def run_arm(config: dict[str, Any], arm_kind: str) -> dict[str, Any]:
                   f"test_acc={prev['test']['overall']['accuracy']:.4f} (already done)", flush=True)
             return prev
 
+    # 저장소 계약: CUDA에서 지원되는 dtype만(bf16 미지원 GPU→fp16), CPU→fp32. P0 sanity와 동일.
+    compute_dtype = resolve_autocast_dtype(device) or torch.float32
     calib = json.loads(Path(config["calib_json"]).read_text(encoding="utf-8"))
     tokenizer = AutoTokenizer.from_pretrained(config["model_dir"])
     model = AutoModelForCausalLM.from_pretrained(
-        config["model_dir"], dtype=torch.bfloat16, attn_implementation="sdpa"
+        config["model_dir"], dtype=compute_dtype, attn_implementation="sdpa"
     ).to(device)
     model.requires_grad_(False)
     model.config.use_cache = False
