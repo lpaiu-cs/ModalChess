@@ -108,14 +108,17 @@ def _expected_answer(task: str, fen: str, params: dict[str, Any]) -> str:
         legal_ucis = {m.uci() for m in board.legal_moves}
         if task == "move_is_legal":
             return YES if move.uci() in legal_ucis else NO
-        # 합법 move에 대해서만 capture/check 판정(생성기가 합법만 출제)
+        # capture/check는 합법 move 전제 — 검증기가 독립적으로 합법성을 확인한다(생성기의
+        # 약속에 의존하지 않음). 비합법 move면 malformed item으로 실패시킨다.
+        if move.uci() not in legal_ucis:
+            raise ValueError(f"{task} move {move.uci()} is not legal in {fen}")
         if task == "move_is_capture":
-            # 독립 경로: 도착 칸 점유 or 앙파상(폰이 대각 이동하며 도착 칸이 비어있음)
+            # 독립 경로: 도착 칸 점유(적 기물) 또는 앙파상(도착 칸이 실제 EP 칸일 때만).
             target = pieces.get(to)
             captures = target is not None and target.color != board.turn
             mover = pieces.get(frm)
             if (not captures and mover is not None and mover.piece_type == chess.PAWN
-                    and chess.square_file(frm) != chess.square_file(to) and target is None):
+                    and board.ep_square is not None and to == board.ep_square):
                 captures = True  # en passant
             return YES if captures else NO
         if task == "move_gives_check":

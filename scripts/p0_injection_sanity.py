@@ -19,6 +19,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from modalchess.fusion.prompting import PRE_BOARD, answer_segment, post_board  # noqa: E402
+from modalchess.utils.device import resolve_autocast_dtype, resolve_device  # noqa: E402
 
 MODEL_DIR = "E:/models/Qwen3-4B-Instruct-2507"
 
@@ -26,10 +27,12 @@ MODEL_DIR = "E:/models/Qwen3-4B-Instruct-2507"
 def main() -> None:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    device = torch.device("cuda")
+    # 저장소 계약: CPU 폴백 + CUDA에서 지원되는 dtype만(bf16 미지원 GPU/ CPU-only 호스트 대응).
+    device = resolve_device()
+    compute_dtype = resolve_autocast_dtype(device) or torch.float32
     tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_DIR, dtype=torch.bfloat16, attn_implementation="sdpa"
+        MODEL_DIR, dtype=compute_dtype, attn_implementation="sdpa"
     ).to(device).eval()
 
     embed = model.get_input_embeddings()
@@ -50,7 +53,7 @@ def main() -> None:
     pre = embeds(PRE_BOARD)
     post = embeds(post_board(question))
     board_inj = (torch.randn(1, 64, hidden, generator=torch.Generator().manual_seed(11))
-                 .to(device, torch.bfloat16) * calib_rms)
+                 .to(device, compute_dtype) * calib_rms)
 
     # (2) teacher-forced NLL
     answer_ids = ids(answer_segment("no"))

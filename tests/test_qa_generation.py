@@ -103,6 +103,17 @@ def test_verifier_t3_known_answers() -> None:
                              ["yes", "no"])) == []
 
 
+def test_verifier_rejects_illegal_capture_check_move() -> None:
+    # 시작 국면에서 e2→f3는 비합법(폰 대각, 빈 칸). 이전엔 앙파상으로 오분류돼 통과했음.
+    bad_cap = _item("move_is_capture", START, {"frm": "e2", "to": "f3"}, "yes", ["yes", "no"])
+    errs = verify_item(bad_cap)
+    assert any("not legal" in e or "recompute failed" in e for e in errs), errs
+    # 합법 캡처(스카치)는 여전히 통과
+    cap = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2"
+    good = _item("move_is_capture", cap, {"frm": "e4", "to": "d5"}, "yes", ["yes", "no"])
+    assert verify_item(good) == []
+
+
 def _random_position_pool(n_games: int, seed: int) -> list[tuple[str, str]]:
     rng = random.Random(seed)
     pool: list[tuple[str, str]] = [(START, "g0"), (PIN_FEN, "g_pin"), (CHECK_FEN, "g_chk")]
